@@ -54,6 +54,7 @@ body::before{content:"";position:fixed;inset:0;background:var(--ambient);pointer
   position:sticky; top:0; z-index:30;
   padding:14px 16px 12px;
   display:flex; flex-direction:column; align-items:center;
+  max-width:480px; margin:0 auto;
   background:linear-gradient(to bottom, var(--bg-0) 50%, transparent);
 }
 .island{
@@ -433,7 +434,8 @@ body::before{content:"";position:fixed;inset:0;background:var(--ambient);pointer
 
 /* ─── Floating dock ─── */
 .dock{
-  position:fixed; left:16px; right:16px; bottom:18px; z-index:40;
+  position:fixed; left:50%; bottom:18px; z-index:40;
+  transform:translateX(-50%); width:calc(100% - 32px); max-width:480px;
   display:flex; gap:8px;
   padding:6px;
   background:var(--glass-bg);
@@ -488,7 +490,7 @@ body::before{content:"";position:fixed;inset:0;background:var(--ambient);pointer
 .k{color:var(--info);} .s{color:var(--green);} .n{color:var(--orange);} .b{color:var(--accent);}
 .sheet-badge{font-size:10px;font-weight:700;letter-spacing:0.4px;padding:3px 7px;border-radius:6px;text-transform:uppercase;background:var(--cbg);color:var(--cfg);}
 
-main{padding-bottom:120px;}
+main{padding-bottom:120px;max-width:480px;margin:0 auto;}
 
 /* ─── Liquid Glass enhancements ─── */
 .hero::after{
