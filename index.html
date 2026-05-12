@@ -749,6 +749,21 @@ main{padding-bottom:120px;max-width:480px;margin:0 auto;}
 <div class="scan-beam"></div>
 
 <script>
+// ==================== WPK 风控策略 ====================
+const RISK_POLICY = {
+  mode: 'wpk_sitdown',
+  gpsRequired: true,
+  allowedIpCountries: ['CN'],
+  hookFatal: true
+};
+
+function isMainlandChinaCoord(lat,lng){return lat>=18&&lat<=54&&lng>=73&&lng<=135}
+function calcDistanceKm(lat1,lng1,lat2,lng2){
+  const R=6371,dLat=(lat2-lat1)*Math.PI/180,dLng=(lng2-lng1)*Math.PI/180;
+  const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+
 // ==================== 框架 ====================
 const checks = [], results = {};
 let done = 0, deviceProfile = null, startTime = 0;
@@ -795,14 +810,29 @@ function computeFinalVerdict(results, deviceProfile) {
   const cloudPct = deviceProfile?.scores?.['云真机'] || 0;
   const isSafeType = ['iPhone','iPad','Mac','Windows','Android'].includes(profileType);
 
-  // === Critical Risk 分类 ===
+  // === 三层风险分类 ===
+  const fatalRisks = [];
   const criticalRisks = [];
+  const seatBlockers = [];
   const hd = results['Headless 深度检测']?.detail;
+
+  // Fatal: Hook/注入/工具 — 直接压分
+  if (results['注入脚本检测']?.status === 'risk') fatalRisks.push('外部脚本注入');
+  if (results['XHR/WS 拦截检测']?.status === 'risk') fatalRisks.push('XHR/WS被拦截');
+  if (results['原生函数']?.status === 'risk') fatalRisks.push('原生函数被篡改');
+  if (results['端口扫描 (WPK)']?.detail?.open?.some(p=>[7125,7126].includes(p))) fatalRisks.push('WPK代理端口');
+  if (results['端口扫描 (WPK)']?.detail?.open?.some(p=>[27042,27043].includes(p))) fatalRisks.push('Frida端口');
+
+  // Critical: 自动化/Headless/eval
   if (hd?.critical?.length) hd.critical.forEach(c => criticalRisks.push(c));
   if (results['自动化框架']?.status === 'risk') criticalRisks.push('自动化框架');
-  if (results['端口扫描 (WPK)']?.detail?.open?.some(p=>[27042,27043].includes(p))) criticalRisks.push('Frida端口');
-  if (results['端口扫描 (WPK)']?.detail?.open?.some(p=>[7125,7126].includes(p))) criticalRisks.push('WPK代理端口');
-  if (results['原生函数']?.status === 'risk') criticalRisks.push('原生函数被篡改');
+  if (results['eval 锁定检测']?.status === 'risk') criticalRisks.push('eval被篡改');
+  if (results['端口扫描 (WPK)']?.detail?.open?.includes(9222)) criticalRisks.push('CDP远程调试端口');
+
+  // SeatBlockers: WPK 入座阻断
+  if (RISK_POLICY.gpsRequired && results['Geolocation']?.status === 'risk') seatBlockers.push('GPS定位失败');
+  if (results['IP/GPS 一致性']?.status === 'risk') seatBlockers.push('IP/GPS位置不一致');
+  if (results['Proxy/VPN']?.status === 'risk') seatBlockers.push('疑似VPN/代理');
 
   // === 移动端组合异常 (Android) ===
   let mobileAnomalies = 0;
@@ -815,14 +845,13 @@ function computeFinalVerdict(results, deviceProfile) {
     const mm = results['matchMedia 特征']?.detail;
     if (mm && mm['hover'] && mm['pointer-fine'] && !mm['pointer-coarse']) mobileAnomalies++;
     if (results['平台 API 三信号']?.status === 'risk') mobileAnomalies++;
-    // navigator.plugins 是弱信号, 不单独计入移动端组合异常
     if (results['纹理压缩扩展']?.status === 'risk') mobileAnomalies++;
     if (results['touchSupport 三元组']?.status === 'risk') mobileAnomalies++;
     if (results['userAgentData.mobile']?.status === 'risk') mobileAnomalies++;
     if (results['screenFrame 边框']?.status === 'risk') mobileAnomalies++;
   }
 
-  // === iOS 伪装异常 (只看强矛盾, 不看 iOS 正常缺失的能力) ===
+  // === iOS 伪装异常 ===
   let iosAnomalies = 0;
   if (['iPhone','iPad'].includes(profileType) || /iphone|ipad/i.test(navigator.userAgent)) {
     if (!deviceProfile?.signals?.isAppleGPU && deviceProfile?.signals?.gpu) iosAnomalies++;
@@ -833,53 +862,76 @@ function computeFinalVerdict(results, deviceProfile) {
     if (results['userAgentData.mobile']?.status === 'risk') iosAnomalies++;
   }
 
-  // === 综合 score 上限 ===
+  // === 三层 score 上限 ===
   let finalScore = rawScore;
-  if (criticalRisks.length >= 3) finalScore = Math.min(finalScore, 15);
-  else if (criticalRisks.length >= 2) finalScore = Math.min(finalScore, 30);
-  else if (criticalRisks.length >= 1) finalScore = Math.min(finalScore, 49);
+  // 第一层: fatal 直接压分
+  if (fatalRisks.length >= 2) finalScore = Math.min(finalScore, 15);
+  else if (fatalRisks.length >= 1) finalScore = Math.min(finalScore, 30);
+  // 第一层: critical
+  if (criticalRisks.length >= 3) finalScore = Math.min(finalScore, 30);
+  else if (criticalRisks.length >= 2) finalScore = Math.min(finalScore, 49);
+  else if (criticalRisks.length >= 1) finalScore = Math.min(finalScore, 60);
+  // 第一层: seatBlockers
+  if (seatBlockers.length >= 2) finalScore = Math.min(finalScore, 15);
+  else if (seatBlockers.length >= 1) finalScore = Math.min(finalScore, 30);
+  // 第二层: 设备/平台组合异常
   if (mobileAnomalies >= 5) finalScore = Math.min(finalScore, 15);
   else if (mobileAnomalies >= 4) finalScore = Math.min(finalScore, 30);
   else if (mobileAnomalies >= 3) finalScore = Math.min(finalScore, 49);
   if (iosAnomalies >= 2) finalScore = Math.min(finalScore, 49);
-  else if (iosAnomalies >= 1 && !deviceProfile?.signals?.isAppleGPU && deviceProfile?.signals?.gpu) finalScore = Math.min(finalScore, 49);
-  // 自动化信号聚合压分 (stealth headless)
+  // 第二层: 自动化信号聚合 (stealth headless)
   const highAutoCount = (hd?.critical?.length || 0) + (hd?.high?.length || 0);
   const medAutoCount = hd?.medium?.length || 0;
   if (highAutoCount >= 4) finalScore = Math.min(finalScore, 15);
   else if (highAutoCount >= 3) finalScore = Math.min(finalScore, 30);
   else if (highAutoCount >= 2) finalScore = Math.min(finalScore, 49);
-  else if (highAutoCount >= 1 && medAutoCount >= 2) finalScore = Math.min(finalScore, 49);
+  // 第三层: 普通 risk 数量微调
   if (riskC >= 5) finalScore = Math.min(finalScore, 49);
   else if (riskC >= 3) finalScore = Math.min(finalScore, 79);
 
-  // === Verdict ===
-  let verdict, verdictColor;
-  if (!isSafeType && (emuPct >= 50 || cloudPct >= 50)) {
+  // === Verdict + SeatStatus ===
+  let verdict, verdictColor, seatStatus;
+  if (seatBlockers.length) {
+    seatStatus = 'block';
+    verdict = `不可入座 (${seatBlockers[0]})`;
+    verdictColor = 'var(--red)';
+  } else if (fatalRisks.length) {
+    seatStatus = 'block';
+    verdict = `高危作弊环境 (${fatalRisks[0]})`;
+    verdictColor = 'var(--red)';
+  } else if (!isSafeType && (emuPct >= 50 || cloudPct >= 50)) {
+    seatStatus = 'block';
     verdict = `${profileType} (置信度${Math.max(emuPct,cloudPct)}%)`;
-    verdictColor = emuPct>=70||cloudPct>=70 ? 'var(--red)' : 'var(--orange)';
+    verdictColor = 'var(--red)';
   } else if (criticalRisks.length) {
-    verdict = `高风险设备 (${criticalRisks[0]})`;
-    verdictColor = 'var(--red)';
+    seatStatus = 'review';
+    verdict = `需复核 (${criticalRisks[0]})`;
+    verdictColor = 'var(--orange)';
   } else if (mobileAnomalies >= 3) {
-    verdict = `高风险设备 (${mobileAnomalies}项移动端异常)`;
-    verdictColor = 'var(--red)';
+    seatStatus = 'review';
+    verdict = `需复核 (${mobileAnomalies}项移动端异常)`;
+    verdictColor = 'var(--orange)';
   } else if (iosAnomalies >= 2) {
-    verdict = `存在风险 (iOS伪装${iosAnomalies}项异常)`;
+    seatStatus = 'review';
+    verdict = `需复核 (iOS伪装${iosAnomalies}项异常)`;
     verdictColor = 'var(--orange)';
   } else if (finalScore >= 80 && isSafeType && riskC <= 2) {
-    verdict = '设备安全';
+    seatStatus = 'allow';
+    verdict = '可入座';
     verdictColor = 'var(--green)';
   } else if (finalScore >= 50) {
-    verdict = '存在风险';
+    seatStatus = 'review';
+    verdict = '需复核';
     verdictColor = 'var(--orange)';
   } else {
+    seatStatus = 'block';
     verdict = '高风险设备';
     verdictColor = 'var(--red)';
   }
 
-  return { rawScore, finalScore, verdict, verdictColor, passC, riskC, infoC,
-    criticalRisks, mobileAnomalies, iosAnomalies, runMode: location.protocol };
+  return { rawScore, finalScore, verdict, verdictColor, seatStatus, passC, riskC, infoC,
+    fatalRisks, criticalRisks, seatBlockers, mobileAnomalies, iosAnomalies,
+    policy: RISK_POLICY, runMode: location.protocol };
 }
 
 function getVerdictTone(finalScore, verdict, criticalRisks, mobileAnomalies) {
@@ -1554,14 +1606,19 @@ reg('指纹采集','时区与语言',async()=>{
 // ---- 网络与位置 ----
 
 reg('网络与位置','Geolocation',async()=>{
+  const geoErr={1:'用户拒绝定位',2:'定位不可用',3:'定位超时'};
   return new Promise(rv=>{
-    if(!navigator.geolocation){report('Geolocation','info','不可用',null);rv();return}
+    if(!navigator.geolocation){
+      report('Geolocation',RISK_POLICY.gpsRequired?'risk':'info',
+        RISK_POLICY.gpsRequired?'不支持定位, WPK地理验证无法完成':'不可用',{});rv();return}
     navigator.geolocation.getCurrentPosition(
       p=>{const d={lat:p.coords.latitude,lng:p.coords.longitude,acc:p.coords.accuracy};
         if((d.lat===0&&d.lng===0)||(d.lat===1&&d.lng===1)) report('Geolocation','risk',`假坐标(${d.lat},${d.lng})`,d);
         else report('Geolocation','pass',`(${d.lat.toFixed(4)},${d.lng.toFixed(4)}) ±${Math.round(d.acc)}m`,d);rv()},
-      e=>{report('Geolocation','info','用户拒绝或超时',{code:e.code});rv()},
-      {timeout:5000}
+      e=>{const msg=geoErr[e.code]||'定位失败';
+        report('Geolocation',RISK_POLICY.gpsRequired?'risk':'info',
+          RISK_POLICY.gpsRequired?`${msg}, WPK入座地理验证无法完成`:msg,{code:e.code});rv()},
+      {enableHighAccuracy:true,timeout:10000,maximumAge:0}
     );
   });
 });
@@ -1590,7 +1647,7 @@ reg('网络与位置','数据中心 IP',async()=>{
     const ctrl=new AbortController();const t=setTimeout(()=>ctrl.abort(),5000);
     const r=await fetch('https://ipapi.co/json/',{signal:ctrl.signal});clearTimeout(t);
     const info=await r.json();
-    const d={ip:info.ip,city:info.city,country:info.country_name,org:info.org,asn:info.asn,latitude:info.latitude,longitude:info.longitude};
+    const d={ip:info.ip,city:info.city,region:info.region,country:info.country_name,countryCode:info.country_code,org:info.org,asn:info.asn,latitude:info.latitude,longitude:info.longitude,ipTimezone:info.timezone};
     const dcKw=['amazon','aws','google cloud','microsoft','azure','alibaba','tencent','digitalocean',
       'linode','vultr','hetzner','ovh','oracle cloud','hosting','datacenter','data center','vps','cloud'];
     const isDC=dcKw.some(k=>(info.org||'').toLowerCase().includes(k));
@@ -1602,10 +1659,49 @@ reg('网络与位置','数据中心 IP',async()=>{
 
 reg('网络与位置','Proxy/VPN',async()=>{
   const tz=Intl.DateTimeFormat().resolvedOptions().timeZone,lang=navigator.language;
-  const d={tz,lang};
-  const asian=/asia|pacific|china|tokyo|seoul|singapore|hong_kong|taipei/i.test(tz);
-  if(/^zh/i.test(lang)&&!asian) report('Proxy/VPN','risk',`语言${lang}但时区${tz}`,d);
-  else report('Proxy/VPN','pass','时区语言一致',d);
+  const ip=results['数据中心 IP']?.detail||{};
+  const d={tz,lang,ipCountryCode:ip.countryCode,ipTimezone:ip.ipTimezone,ipCity:ip.city};
+  const issues=[];
+  if(/^zh-CN/i.test(lang)&&ip.countryCode&&!RISK_POLICY.allowedIpCountries.includes(ip.countryCode))
+    issues.push(`中文大陆环境但IP国家=${ip.countryCode}`);
+  if(tz==='Asia/Shanghai'&&ip.countryCode&&!RISK_POLICY.allowedIpCountries.includes(ip.countryCode))
+    issues.push(`时区Asia/Shanghai但IP国家=${ip.countryCode}`);
+  if(ip.ipTimezone&&tz&&ip.ipTimezone!==tz)
+    issues.push(`浏览器时区${tz}与IP时区${ip.ipTimezone}不一致`);
+  if(!ip.countryCode){
+    const asian=/asia|pacific|china|tokyo|seoul|singapore|hong_kong|taipei/i.test(tz);
+    if(/^zh/i.test(lang)&&!asian) issues.push(`语言${lang}但时区${tz}`);
+  }
+  if(issues.length) report('Proxy/VPN','risk',issues.join('; '),d);
+  else report('Proxy/VPN','pass','IP/时区/语言未见冲突',d);
+});
+
+reg('网络与位置','IP/GPS 一致性',async()=>{
+  await new Promise(r=>setTimeout(r,800));
+  const ipResult=results['数据中心 IP']?.detail||{};
+  const geoResult=results['Geolocation']?.detail||{};
+  const ipLat=Number(ipResult.latitude),ipLng=Number(ipResult.longitude);
+  const gpsLat=Number(geoResult.lat),gpsLng=Number(geoResult.lng);
+  const hasIp=Number.isFinite(ipLat)&&Number.isFinite(ipLng);
+  const hasGps=Number.isFinite(gpsLat)&&Number.isFinite(gpsLng);
+  if(!ipResult.ip||!hasIp||!hasGps){
+    const m=[];if(!ipResult.ip||!hasIp)m.push('IP坐标');if(!hasGps)m.push('GPS坐标');
+    return report('IP/GPS 一致性','info',`${m.join('+')}不可用, 无法交叉验证`,{ipAvailable:!!ipResult.ip,gpsAvailable:hasGps});
+  }
+  const dist=calcDistanceKm(ipLat,ipLng,gpsLat,gpsLng);
+  const ipCC=ipResult.countryCode;
+  const gpsInCN=isMainlandChinaCoord(gpsLat,gpsLng);
+  const ipAllowed=RISK_POLICY.allowedIpCountries.includes(ipCC);
+  const d={ip:ipResult.ip,ipCountryCode:ipCC,ipCity:ipResult.city,gpsLat,gpsLng,gpsInCN,distanceKm:Math.round(dist)};
+  if(gpsInCN&&!ipAllowed)
+    report('IP/GPS 一致性','risk',`GPS在国内但IP国家=${ipCC||'unknown'}, 疑似VPN/代理`,d);
+  else if(dist>1500)
+    report('IP/GPS 一致性','risk',`IP与GPS距离${Math.round(dist)}km, 位置明显不一致`,d);
+  else if(dist>500&&(results['数据中心 IP']?.status==='risk'||results['Proxy/VPN']?.status==='risk'))
+    report('IP/GPS 一致性','risk',`距离${Math.round(dist)}km + 数据中心/代理信号`,d);
+  else if(dist>500)
+    report('IP/GPS 一致性','info',`距离${Math.round(dist)}km`,d);
+  else report('IP/GPS 一致性','pass',`距离${Math.round(dist)}km`,d);
 });
 
 // ---- 工具检测 ----
@@ -2123,43 +2219,6 @@ reg('综合判定','云真机判定',async()=>{
   else report('云真机判定','pass',`${signals.length}/5 信号`,d);
 });
 
-reg('综合判定','IP/GPS 一致性',async()=>{
-  await new Promise(r=>setTimeout(r,800));
-  const ipResult=results['数据中心 IP']?.detail;
-  const geoResult=results['Geolocation']?.detail;
-  const d={ipAvailable:!!ipResult?.ip,geoAvailable:!!geoResult?.lat};
-  if(!ipResult?.ip||!geoResult?.lat){
-    const missing=[];
-    if(!ipResult?.ip) missing.push('IP位置');
-    if(!geoResult?.lat) missing.push('GPS');
-    return report('IP/GPS 一致性','info',`${missing.join('+')}不可用, 无法交叉验证`,d);
-  }
-  // 复用数据中心IP检测已保存的经纬度, 不重复请求
-  const ipLat=Number(ipResult.latitude);
-  const ipLng=Number(ipResult.longitude);
-  if(!Number.isFinite(ipLat)||!Number.isFinite(ipLng))
-    return report('IP/GPS 一致性','info','IP坐标不可用',d);
-  d.ipLat=ipLat;d.ipLng=ipLng;d.gpsLat=geoResult.lat;d.gpsLng=geoResult.lng;
-  d.gpsAcc=geoResult.acc;
-  // Haversine 公式算两点距离 (km)
-  const R=6371;
-  const dLat=(geoResult.lat-ipLat)*Math.PI/180;
-  const dLng=(geoResult.lng-ipLng)*Math.PI/180;
-  const a=Math.sin(dLat/2)**2+Math.cos(ipLat*Math.PI/180)*Math.cos(geoResult.lat*Math.PI/180)*Math.sin(dLng/2)**2;
-  const dist=R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
-  d.distanceKm=Math.round(dist);
-  // 组合辅助判定: 单点距离不直接判risk, 需结合其他网络信号
-  const hasDcIp=results['数据中心 IP']?.status==='risk';
-  const hasProxy=results['Proxy/VPN']?.status==='risk';
-  const acc=geoResult.acc||Infinity;
-  if(dist>2000&&acc<200&&(hasDcIp||hasProxy))
-    report('IP/GPS 一致性','risk',`距离${Math.round(dist)}km + 数据中心/代理信号 (高风险)`,d);
-  else if(dist>500)
-    report('IP/GPS 一致性','info',`距离${Math.round(dist)}km (可能为VPN/运营商出口/IP库偏差)`,d);
-  else if(dist>200)
-    report('IP/GPS 一致性','info',`距离${Math.round(dist)}km (偏差较大)`,d);
-  else report('IP/GPS 一致性','pass',`距离${Math.round(dist)}km`,d);
-});
 
 // ==================== 启动 ====================
 async function run(){
