@@ -91,7 +91,7 @@ body::before{content:"";position:fixed;inset:0;background:var(--ambient);pointer
   content:""; position:absolute;
   top:0; bottom:0; width:60%; left:-60%;
   background:linear-gradient(110deg, transparent 30%, rgba(255,255,255,0.16) 50%, transparent 70%);
-  animation:shimmer 3.4s ease-in-out 1 forwards;
+  animation:shimmer 3.4s ease-in-out infinite;
   pointer-events:none;
   mix-blend-mode:overlay;
 }
@@ -103,7 +103,7 @@ body::before{content:"";position:fixed;inset:0;background:var(--ambient);pointer
   width:10px; height:10px; border-radius:50%;
   background:var(--orange); flex-shrink:0;
   box-shadow:0 0 0 0 rgba(255,159,10,0.7);
-  animation:pulse 1.6s ease-out 1 forwards;
+  animation:pulse 1.6s ease-out infinite;
 }
 @keyframes pulse{
   0%{box-shadow:0 0 0 0 rgba(255,159,10,0.55);}
@@ -506,7 +506,7 @@ main{padding-bottom:120px;}
 }
 
 #ring{
-  animation:ringPulse 3.6s ease-in-out 1.6s 1 forwards;
+  animation:ringPulse 3.6s ease-in-out infinite;
 }
 @keyframes ringPulse{
   0%,100%{ filter:drop-shadow(0 0 6px rgba(255,69,58,0.50)); }
@@ -524,7 +524,7 @@ main{padding-bottom:120px;}
   content:""; position:absolute; inset:0;
   background:linear-gradient(100deg, transparent 35%, rgba(255,255,255,0.22) 50%, transparent 65%);
   transform:translateX(-100%);
-  animation:evScan 3.2s ease-in-out 1.4s 1 forwards;
+  animation:evScan 3.2s ease-in-out infinite;
   pointer-events:none; mix-blend-mode:overlay;
 }
 @keyframes evScan{
@@ -557,7 +557,7 @@ main{padding-bottom:120px;}
   to  { opacity:1; transform:translateY(0)   scale(1);    filter:blur(0);    }
 }
 .item[data-st="risk"] .item-badge{
-  animation:badgePulse 1.8s ease-in-out 1 forwards;
+  animation:badgePulse 1.8s ease-in-out infinite;
 }
 @keyframes badgePulse{
   0%,100%{ box-shadow:0 0 6px var(--accent-c); transform:scale(1); }
@@ -613,10 +613,20 @@ main{padding-bottom:120px;}
   100%{ transform:translateY(420%); opacity:0; }
 }
 
-.hero-icon{ animation:iconBreathe 4.5s ease-in-out 1 forwards; }
+.hero-icon{ animation:iconBreathe 4.5s ease-in-out infinite; }
 @keyframes iconBreathe{
   0%,100%{ transform:scale(1); box-shadow:inset 0 0 0 0.5px rgba(255,69,58,0.35), 0 0 0 0 rgba(255,69,58,0.0); }
   50%    { transform:scale(1.04); box-shadow:inset 0 0 0 0.5px rgba(255,69,58,0.5), 0 0 22px rgba(255,69,58,0.18); }
+}
+
+/* 检测完成后停掉所有循环动画 */
+.scan-done .island::after,
+.scan-done .island-dot,
+.scan-done #ring,
+.scan-done .ev-row::after,
+.scan-done .hero-icon,
+.scan-done .item[data-st="risk"] .item-badge{
+  animation:none;
 }
 
 @media (prefers-reduced-motion: reduce){
@@ -890,7 +900,8 @@ function updateScore() {
   const score = Math.max(0, Math.min(100, Math.round(checkRate * (1 - riskConf))));
 
   if (done >= checks.length) {
-    // 所有检测完成 → 统一最终判定
+    // 所有检测完成 → 停掉循环动画 + 统一最终判定
+    document.body.classList.add('scan-done');
     lastVerdict = computeFinalVerdict(results, deviceProfile);
     const fs = lastVerdict.finalScore;
     const tone = getVerdictTone(fs, lastVerdict.verdict, lastVerdict.criticalRisks, lastVerdict.mobileAnomalies);
@@ -1975,6 +1986,7 @@ reg('综合判定','云真机判定',async()=>{
 async function run(){
   done=0;lastVerdict=null;Object.keys(results).forEach(k=>delete results[k]);
   startTime = performance.now();
+  document.body.classList.remove('scan-done');
 
   // 重置 UI
   document.getElementById('scoreN').textContent = '--';
