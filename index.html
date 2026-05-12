@@ -778,6 +778,253 @@ reg('行为分析', 'Storage 可用性', async () => {
     report('Storage 可用性', 'pass', '所有存储 API 可用', d);
 });
 
+// ---- H5 专项检测 (来源: WPK H5 版本风控分析) ----
+
+reg('H5 专项检测', '媒体设备枚举', async () => {
+  try {
+    if (!navigator.mediaDevices?.enumerateDevices)
+      return report('媒体设备枚举', 'warn', 'enumerateDevices API 不可用', null);
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const cams = devices.filter(d => d.kind === 'videoinput');
+    const mics = devices.filter(d => d.kind === 'audioinput');
+    const spks = devices.filter(d => d.kind === 'audiooutput');
+    const d = { cameras: cams.length, microphones: mics.length, speakers: spks.length,
+                labels: devices.map(d => d.kind + ':' + (d.label || '(no label)')) };
+    if (cams.length === 0 && mics.length === 0)
+      report('媒体设备枚举', 'risk', '无摄像头且无麦克风 (模拟器/云真机特征)', d);
+    else if (cams.length === 0)
+      report('媒体设备枚举', 'warn', `无摄像头 (麦克风${mics.length}个)`, d);
+    else
+      report('媒体设备枚举', 'pass', `摄像头${cams.length} 麦克风${mics.length} 扬声器${spks.length}`, d);
+  } catch (e) {
+    report('媒体设备枚举', 'warn', '枚举失败: ' + e.message, null);
+  }
+});
+
+reg('H5 专项检测', '触摸压力/面积分析', async () => {
+  return new Promise(resolve => {
+    const samples = [];
+    const tip = document.createElement('div');
+    tip.style.cssText = 'text-align:center;padding:16px;margin:8px 0;background:var(--card);border:1px dashed var(--green);border-radius:10px;font-size:13px;color:var(--green);cursor:pointer;user-select:none;';
+    tip.textContent = '👆 请在此处按压并滑动（3秒采集触摸数据）';
+    const card = document.getElementById('card-' + hashName('触摸压力/面积分析'));
+    if (card) card.after(tip);
+
+    const handler = (e) => {
+      for (let i = 0; i < e.touches.length; i++) {
+        const t = e.touches[i];
+        samples.push({
+          force: t.force, radiusX: t.radiusX, radiusY: t.radiusY,
+          rotationAngle: t.rotationAngle, x: t.clientX, y: t.clientY, ts: e.timeStamp
+        });
+      }
+    };
+    tip.addEventListener('touchmove', handler, { passive: true });
+    tip.addEventListener('touchstart', handler, { passive: true });
+
+    setTimeout(() => {
+      tip.removeEventListener('touchmove', handler);
+      tip.removeEventListener('touchstart', handler);
+      tip.remove();
+      const d = { sampleCount: samples.length, samples: samples.slice(0, 10) };
+      if (samples.length === 0) {
+        report('触摸压力/面积分析', 'warn', '无触摸数据（桌面端或未操作）', d);
+      } else {
+        const hasForce = samples.some(s => s.force > 0 && s.force < 1);
+        const hasRadius = samples.some(s => s.radiusX > 0);
+        const allZeroForce = samples.every(s => s.force === 0);
+        d.hasForce = hasForce; d.hasRadius = hasRadius; d.allZeroForce = allZeroForce;
+        if (allZeroForce && !hasRadius)
+          report('触摸压力/面积分析', 'risk', `${samples.length}个采样全部 force=0 radius=0 (注入/模拟)`, d);
+        else if (allZeroForce)
+          report('触摸压力/面积分析', 'warn', `force全为0 (可能不支持或模拟触摸)`, d);
+        else
+          report('触摸压力/面积分析', 'pass', `${samples.length}采样 有压力=${hasForce} 有面积=${hasRadius}`, d);
+      }
+      resolve();
+    }, 3000);
+  });
+});
+
+reg('H5 专项检测', 'FP/FCP/LCP 性能指标', async () => {
+  return new Promise(resolve => {
+    const d = { fp: null, fcp: null, lcp: null };
+    try {
+      const entries = performance.getEntriesByType('paint');
+      entries.forEach(e => {
+        if (e.name === 'first-paint') d.fp = Math.round(e.startTime);
+        if (e.name === 'first-contentful-paint') d.fcp = Math.round(e.startTime);
+      });
+      // LCP 需要 PerformanceObserver
+      try {
+        const obs = new PerformanceObserver(list => {
+          const entries = list.getEntries();
+          if (entries.length) d.lcp = Math.round(entries[entries.length - 1].startTime);
+        });
+        obs.observe({ type: 'largest-contentful-paint', buffered: true });
+        setTimeout(() => {
+          obs.disconnect();
+          // 判定：FCP < 50ms 且 LCP < 100ms 可能是缓存作弊或预渲染
+          if (d.fcp !== null && d.fcp < 50)
+            report('FP/FCP/LCP 性能指标', 'warn', `FCP=${d.fcp}ms 异常快 (预渲染/缓存?)`, d);
+          else if (d.fcp !== null)
+            report('FP/FCP/LCP 性能指标', 'pass', `FP=${d.fp}ms FCP=${d.fcp}ms LCP=${d.lcp}ms`, d);
+          else
+            report('FP/FCP/LCP 性能指标', 'warn', '无法获取 paint 指标', d);
+          resolve();
+        }, 1500);
+      } catch (e) {
+        report('FP/FCP/LCP 性能指标', 'pass', `FP=${d.fp}ms FCP=${d.fcp}ms`, d);
+        resolve();
+      }
+    } catch (e) {
+      report('FP/FCP/LCP 性能指标', 'warn', '性能 API 不可用', d);
+      resolve();
+    }
+  });
+});
+
+reg('H5 专项检测', 'Console 劫持检测', async () => {
+  const d = {};
+  const methods = ['log', 'warn', 'error', 'info', 'debug'];
+  const hijacked = [];
+  methods.forEach(m => {
+    try {
+      const str = Function.prototype.toString.call(console[m]);
+      d[m] = str.substring(0, 60);
+      if (!/\[native code\]/.test(str)) hijacked.push(m);
+    } catch (e) { hijacked.push(m + '(error)'); }
+  });
+  if (hijacked.length >= 3)
+    report('Console 劫持检测', 'risk', `${hijacked.length}/5 console方法被覆写: ${hijacked.join(',')}`, d);
+  else if (hijacked.length > 0)
+    report('Console 劫持检测', 'warn', `${hijacked.join(',')} 被覆写`, d);
+  else
+    report('Console 劫持检测', 'pass', '所有 console 方法原生', d);
+});
+
+reg('H5 专项检测', 'Service Worker 检测', async () => {
+  const d = {};
+  try {
+    if (!('serviceWorker' in navigator))
+      return report('Service Worker 检测', 'pass', 'SW API 不可用', d);
+    const regs = await navigator.serviceWorker.getRegistrations();
+    d.registrations = regs.length;
+    d.details = regs.map(r => ({
+      scope: r.scope,
+      active: r.active?.scriptURL || null,
+      waiting: r.waiting?.scriptURL || null
+    }));
+    if (regs.length > 0)
+      report('Service Worker 检测', 'warn', `${regs.length} 个 SW 注册 (可能拦截请求)`, d);
+    else
+      report('Service Worker 检测', 'pass', '无 Service Worker', d);
+  } catch (e) {
+    report('Service Worker 检测', 'pass', 'SW 检测受限: ' + e.message, d);
+  }
+});
+
+reg('H5 专项检测', '页面生命周期监控', async () => {
+  const d = {};
+  // 检查 bfcache 恢复
+  d.performanceNavType = performance.navigation?.type; // 0=navigate, 1=reload, 2=back_forward
+  d.navEntryType = performance.getEntriesByType('navigation')[0]?.type || 'unknown';
+
+  // 检查页面可见性
+  d.visibilityState = document.visibilityState;
+  d.hidden = document.hidden;
+
+  // 检查 prerender
+  d.prerendering = document.prerendering || false;
+  d.wasDiscarded = document.wasDiscarded || false;
+
+  // 检查页面加载时间
+  const nav = performance.getEntriesByType('navigation')[0];
+  if (nav) {
+    d.loadTime = Math.round(nav.loadEventEnd - nav.startTime);
+    d.domContentLoaded = Math.round(nav.domContentLoadedEventEnd - nav.startTime);
+    d.transferSize = nav.transferSize;
+  }
+
+  let status = 'pass', msg = `${d.navEntryType} | 加载${d.loadTime || '?'}ms`;
+  if (d.prerendering) { status = 'warn'; msg = '页面处于 prerender 状态'; }
+  else if (d.wasDiscarded) { status = 'warn'; msg = '页面曾被丢弃后恢复'; }
+  else if (d.navEntryType === 'back_forward') { status = 'warn'; msg = '从 bfcache 恢复 (可能绕过初始化)'; }
+  report('页面生命周期监控', status, msg, d);
+});
+
+reg('H5 专项检测', '数据中心 IP 检测', async () => {
+  try {
+    // 通过公开 API 获取出口 IP 和归属信息
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    const resp = await fetch('https://ipapi.co/json/', { signal: controller.signal });
+    clearTimeout(timer);
+    const info = await resp.json();
+    const d = {
+      ip: info.ip, city: info.city, region: info.region, country: info.country_name,
+      org: info.org, asn: info.asn, timezone: info.timezone
+    };
+    // 检测数据中心/云服务商 IP
+    const dcKeywords = ['amazon', 'aws', 'google cloud', 'microsoft', 'azure', 'alibaba',
+      'tencent', 'digitalocean', 'linode', 'vultr', 'hetzner', 'ovh', 'oracle cloud',
+      'cloudflare', 'akamai', 'fastly', 'hosting', 'server', 'datacenter', 'data center',
+      'colocation', 'dedicated', 'vps', 'cloud'];
+    const orgLower = (info.org || '').toLowerCase();
+    const isDataCenter = dcKeywords.some(k => orgLower.includes(k));
+    d.isDataCenter = isDataCenter;
+
+    if (isDataCenter)
+      report('数据中心 IP 检测', 'risk', `数据中心 IP: ${info.ip} (${info.org})`, d);
+    else
+      report('数据中心 IP 检测', 'pass', `${info.ip} | ${info.city}, ${info.country_name} | ${info.org}`, d);
+  } catch (e) {
+    report('数据中心 IP 检测', 'warn', '无法获取 IP 信息: ' + e.message, null);
+  }
+});
+
+reg('H5 专项检测', '云真机综合判定', async () => {
+  // 等待其他检测完成后综合判定
+  await new Promise(r => setTimeout(r, 500));
+  const signals = [];
+  const d = {};
+
+  // 信号1: 电池满+充电
+  const bat = results['电池状态'];
+  if (bat?.status === 'risk') signals.push('电池100%+永充');
+  d.battery = bat?.status;
+
+  // 信号2: 数据中心 IP
+  const dcip = results['数据中心 IP 检测'];
+  if (dcip?.status === 'risk') signals.push('数据中心IP');
+  d.datacenterIP = dcip?.status;
+
+  // 信号3: 无媒体设备
+  const media = results['媒体设备枚举'];
+  if (media?.status === 'risk') signals.push('无摄像头/麦克风');
+  d.mediaDevices = media?.status;
+
+  // 信号4: 传感器缺失
+  const sensor = results['传感器检测'];
+  if (sensor?.status === 'risk') signals.push('无传感器');
+  d.sensors = sensor?.status;
+
+  // 信号5: 无 DeviceMotion
+  const motion = results['DeviceMotion 事件'];
+  if (motion?.status === 'risk') signals.push('无运动数据');
+  d.deviceMotion = motion?.status;
+
+  d.signals = signals;
+  d.score = signals.length;
+
+  if (signals.length >= 3)
+    report('云真机综合判定', 'risk', `${signals.length}/5 信号命中: ${signals.join(' + ')}`, d);
+  else if (signals.length >= 2)
+    report('云真机综合判定', 'warn', `${signals.length}/5 信号: ${signals.join(' + ')}`, d);
+  else
+    report('云真机综合判定', 'pass', `仅 ${signals.length}/5 信号`, d);
+});
+
 // ========== 启动 ==========
 runAll();
 </script>
