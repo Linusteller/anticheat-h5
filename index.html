@@ -142,7 +142,9 @@ function updateScore() {
   document.getElementById('s-risk').textContent = riskC;
   document.getElementById('s-warn').textContent = warnC;
 
-  const score = Math.round((passC * 100 + warnC * 50) / doneCount);
+  // 评分: pass 得 100 分, warn 得 40 分, risk 倒扣 200 分
+  const raw = (passC * 100 + warnC * 40 - riskC * 200) / doneCount;
+  const score = Math.max(0, Math.min(100, Math.round(raw)));
   const arc = document.getElementById('score-arc');
   const offset = 427.3 * (1 - score / 100);
   arc.style.strokeDashoffset = offset;
@@ -205,6 +207,14 @@ function exportJSON() {
 
 // ========== 检测实现 ==========
 
+// 辅助: 判断是否为移动端 UA
+function _isMobileUA() {
+  return /android|iphone|ipad|mobile/i.test(navigator.userAgent);
+}
+function _isDesktop() {
+  return /Win|Mac|Linux x86/i.test(navigator.platform) && !_isMobileUA();
+}
+
 // ---- 模拟器检测 ----
 
 reg('模拟器检测', 'WebGL 渲染器', async () => {
@@ -214,24 +224,31 @@ reg('模拟器检测', 'WebGL 渲染器', async () => {
   const dbg = gl.getExtension('WEBGL_debug_renderer_info');
   const vendor = dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR);
   const renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
-  const emuKeywords = ['swiftshader', 'llvmpipe', 'softpipe', 'virtualbox', 'vmware', 'mesa', 'microsoft basic', 'chromium', 'google', 'android emulator', 'bluestacks', 'nox', 'genymotion', 'goldfish'];
   const lc = (vendor + ' ' + renderer).toLowerCase();
+  // 真实 GPU 品牌白名单 (ANGLE 包裹的真实 GPU 不算模拟器)
+  const realGPU = /nvidia|geforce|radeon|amd|intel|adreno|mali|powervr|apple gpu|iris/i.test(renderer);
+  // 模拟器/软件渲染特征
+  const emuKeywords = ['swiftshader', 'llvmpipe', 'softpipe', 'virtualbox', 'vmware', 'mesa dri', 'microsoft basic render', 'android emulator', 'bluestacks', 'nox', 'genymotion', 'goldfish', 'vbox'];
   const hit = emuKeywords.find(k => lc.includes(k));
   if (hit) report('WebGL 渲染器', 'risk', `检测到模拟器特征: ${hit}`, { vendor, renderer });
-  else report('WebGL 渲染器', 'pass', renderer.substring(0, 50), { vendor, renderer });
+  else if (realGPU) report('WebGL 渲染器', 'pass', renderer.substring(0, 60), { vendor, renderer });
+  else report('WebGL 渲染器', 'warn', `未识别的渲染器: ${renderer.substring(0, 40)}`, { vendor, renderer });
 });
 
 reg('模拟器检测', '电池状态', async () => {
   if (!navigator.getBattery) return report('电池状态', 'warn', 'Battery API 不可用', null);
   const b = await navigator.getBattery();
-  const detail = { level: b.level, charging: b.charging, chargingTime: b.chargingTime, dischargingTime: b.dischargingTime };
-  // 模拟器特征: 永远100%+充电, 或 chargingTime=0
-  if (b.level === 1 && b.charging && b.chargingTime === 0)
+  const detail = { level: b.level, charging: b.charging, chargingTime: b.chargingTime, dischargingTime: b.dischargingTime, isDesktop: _isDesktop() };
+  // 桌面端: 台式机永远满电+插电是正常的
+  if (_isDesktop()) {
+    report('电池状态', 'pass', `桌面端 电量${Math.round(b.level*100)}%`, detail);
+  } else if (b.level === 1 && b.charging && b.chargingTime === 0) {
     report('电池状态', 'risk', '电量100%+永远充电 (模拟器特征)', detail);
-  else if (b.level === 1 && b.charging)
+  } else if (b.level === 1 && b.charging) {
     report('电池状态', 'warn', '满电+充电中', detail);
-  else
+  } else {
     report('电池状态', 'pass', `电量${Math.round(b.level*100)}% ${b.charging ? '充电中' : '未充电'}`, detail);
+  }
 });
 
 reg('模拟器检测', '传感器检测', async () => {
@@ -253,7 +270,9 @@ reg('模拟器检测', '传感器检测', async () => {
     check('陀螺仪', window.Gyroscope),
     check('磁力计', window.Magnetometer),
   ]);
-  if (missing >= 3) report('传感器检测', 'risk', '无任何传感器 (模拟器特征)', sensors);
+  // 桌面端无传感器是正常的，仅移动端视为风险
+  if (missing >= 3 && _isMobileUA()) report('传感器检测', 'risk', '移动端无任何传感器 (模拟器特征)', sensors);
+  else if (missing >= 3) report('传感器检测', 'warn', '无传感器 (桌面端正常)', sensors);
   else if (missing >= 2) report('传感器检测', 'warn', `${missing}/3 传感器缺失`, sensors);
   else report('传感器检测', 'pass', `${3-missing}/3 传感器可用`, sensors);
 });
@@ -265,8 +284,10 @@ reg('模拟器检测', 'DeviceMotion 事件', async () => {
       received = true;
       window.removeEventListener('devicemotion', handler);
       const a = e.accelerationIncludingGravity || {};
-      if (a.x === null && a.y === null && a.z === null)
-        report('DeviceMotion 事件', 'risk', '加速度全为null (模拟器)', { x: a.x, y: a.y, z: a.z });
+      if (a.x === null && a.y === null && a.z === null && _isMobileUA())
+        report('DeviceMotion 事件', 'risk', '移动端加速度全为null (模拟器)', { x: a.x, y: a.y, z: a.z });
+      else if (a.x === null && a.y === null && a.z === null)
+        report('DeviceMotion 事件', 'warn', '加速度为null (桌面端正常)', { x: a.x, y: a.y, z: a.z });
       else if (a.x === 0 && a.y === 0 && a.z === 0)
         report('DeviceMotion 事件', 'warn', '加速度全为0', { x: a.x, y: a.y, z: a.z });
       else
@@ -277,7 +298,8 @@ reg('模拟器检测', 'DeviceMotion 事件', async () => {
     setTimeout(() => {
       if (!received) {
         window.removeEventListener('devicemotion', handler);
-        report('DeviceMotion 事件', 'risk', '2秒内无 devicemotion 事件 (可能是模拟器/桌面)', null);
+        const s = _isMobileUA() ? 'risk' : 'warn';
+        report('DeviceMotion 事件', s, _isMobileUA() ? '移动端无 devicemotion (模拟器)' : '无 devicemotion (桌面端正常)', null);
         resolve();
       }
     }, 2000);
@@ -296,7 +318,7 @@ reg('模拟器检测', '屏幕特征', async () => {
   const emuRes = [[320,480],[360,640],[384,640],[480,800],[540,960],[600,1024],[768,1024],[800,1280],[1080,1920]];
   const isEmuRes = emuRes.some(([w,h]) => (d.width===w && d.height===h) || (d.width===h && d.height===w));
   // DPR异常
-  if (d.pixelRatio === 1 && d.width > 400)
+  if (d.pixelRatio === 1 && d.width > 400 && _isMobileUA())
     report('屏幕特征', 'warn', `DPR=1 但宽度${d.width}px (可能是模拟器)`, d);
   else if (d.colorDepth < 24)
     report('屏幕特征', 'warn', `色深${d.colorDepth}位 (异常)`, d);
@@ -745,7 +767,7 @@ reg('行为分析', 'navigator 属性异常', async () => {
   // 检测 headless 特征
   if (navigator.webdriver === true) issues.push('navigator.webdriver=true');
   if (!navigator.languages || navigator.languages.length === 0) issues.push('languages 为空');
-  if (navigator.plugins && navigator.plugins.length === 0 && !/mobile/i.test(navigator.userAgent))
+  if (navigator.plugins && navigator.plugins.length === 0 && !_isMobileUA())
     issues.push('桌面端 plugins=0');
 
   // 检测 permissions API 异常
@@ -1023,6 +1045,108 @@ reg('H5 专项检测', '云真机综合判定', async () => {
     report('云真机综合判定', 'warn', `${signals.length}/5 信号: ${signals.join(' + ')}`, d);
   else
     report('云真机综合判定', 'pass', `仅 ${signals.length}/5 信号`, d);
+});
+
+// ---- 综合判定 ----
+
+reg('综合判定', '设备类型概率', async () => {
+  await new Promise(r => setTimeout(r, 800));
+  let pPhone = 0, pEmulator = 0, pDesktop = 0, pCloudDevice = 0;
+  const ua = navigator.userAgent;
+  const pf = navigator.platform;
+
+  // 基础 UA 判定
+  if (/android/i.test(ua) && /linux arm/i.test(pf)) pPhone += 30;
+  if (/iphone|ipad/i.test(ua)) pPhone += 35;
+  if (/Win|Mac/.test(pf) && !/android|mobile/i.test(ua)) pDesktop += 40;
+  if (/linux/i.test(pf) && !/android/i.test(ua)) pDesktop += 25;
+
+  // 硬件特征
+  const hw = results['硬件信息']?.detail;
+  if (hw) {
+    if (hw.maxTouchPoints > 0 && /android|iphone/i.test(ua)) pPhone += 10;
+    if (hw.maxTouchPoints === 0) pDesktop += 10;
+    if (hw.cores >= 16) pDesktop += 5;
+    if (hw.memory >= 16) pDesktop += 5;
+  }
+
+  // WebGL GPU
+  const gl = results['WebGL 渲染器'];
+  if (gl?.status === 'risk') pEmulator += 25;
+  const glDetail = gl?.detail;
+  if (glDetail) {
+    const r = (glDetail.renderer || '').toLowerCase();
+    if (/adreno|mali|powervr|apple gpu/i.test(r)) pPhone += 15;
+    if (/nvidia|radeon|geforce|intel.*iris|intel.*uhd/i.test(r)) pDesktop += 15;
+    if (/swiftshader|llvmpipe|virtualbox|vmware/i.test(r)) pEmulator += 30;
+  }
+
+  // 电池
+  const bat = results['电池状态'];
+  if (bat?.detail?.level === 1 && bat?.detail?.charging && bat?.detail?.chargingTime === 0) {
+    if (_isMobileUA()) pEmulator += 20;
+    else pDesktop += 5;
+  }
+  if (bat?.detail && bat.detail.level < 1 && !bat.detail.charging) pPhone += 10;
+
+  // 传感器
+  const sen = results['传感器检测'];
+  if (sen?.status === 'risk') { pEmulator += 15; pPhone -= 10; }
+  if (sen?.status === 'pass') pPhone += 10;
+
+  // DeviceMotion
+  const dm = results['DeviceMotion 事件'];
+  if (dm?.status === 'risk') pEmulator += 15;
+  if (dm?.status === 'pass') pPhone += 10;
+
+  // 媒体设备
+  const media = results['媒体设备枚举'];
+  if (media?.status === 'risk') { pEmulator += 10; pCloudDevice += 10; }
+
+  // 数据中心 IP
+  const dcip = results['数据中心 IP 检测'];
+  if (dcip?.status === 'risk') pCloudDevice += 30;
+
+  // 云真机综合
+  const cloud = results['云真机综合判定'];
+  if (cloud?.detail?.score >= 3) pCloudDevice += 20;
+
+  // 自动化框架
+  const auto = results['自动化框架检测'];
+  if (auto?.status === 'risk') { pEmulator += 10; pDesktop += 5; }
+
+  // 插件数
+  const plugins = results['浏览器插件数量'];
+  if (plugins?.detail?.count >= 3) pDesktop += 8;
+  if (plugins?.detail?.count === 0 && !_isMobileUA()) pEmulator += 5;
+
+  // 归一化
+  const total = Math.max(1, pPhone + pEmulator + pDesktop + pCloudDevice);
+  const norm = (v) => Math.max(0, Math.min(100, Math.round(v / total * 100)));
+  const result = {
+    '真实手机': norm(pPhone),
+    '模拟器': norm(pEmulator),
+    'PC浏览器': norm(pDesktop),
+    '云真机': norm(pCloudDevice)
+  };
+
+  // 确保总和 = 100
+  const vals = Object.values(result);
+  const sum = vals.reduce((a,b) => a+b, 0);
+  if (sum !== 100) {
+    const maxKey = Object.entries(result).sort((a,b) => b[1]-a[1])[0][0];
+    result[maxKey] += 100 - sum;
+  }
+
+  const best = Object.entries(result).sort((a,b) => b[1]-a[1]);
+  const topType = best[0][0];
+  const topPct = best[0][1];
+
+  const isSafe = topType === '真实手机' || topType === 'PC浏览器';
+  const status = isSafe && topPct >= 60 ? 'pass' : topPct >= 40 ? 'warn' : 'risk';
+  const summary = best.map(([k,v]) => `${k} ${v}%`).join(' | ');
+
+  report('设备类型概率', status, summary, { raw: { pPhone, pEmulator, pDesktop, pCloudDevice }, normalized: result });
 });
 
 // ========== 启动 ==========
