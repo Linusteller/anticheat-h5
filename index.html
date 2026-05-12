@@ -815,6 +815,9 @@ function computeFinalVerdict(results, deviceProfile) {
     if (results['平台 API 三信号']?.status === 'risk') mobileAnomalies++;
     if (results['navigator.plugins']?.status === 'risk') mobileAnomalies++;
     if (results['纹理压缩扩展']?.status === 'risk') mobileAnomalies++;
+    if (results['touchSupport 三元组']?.status === 'risk') mobileAnomalies++;
+    if (results['userAgentData.mobile']?.status === 'risk') mobileAnomalies++;
+    if (results['screenFrame 边框']?.status === 'risk') mobileAnomalies++;
   }
 
   // === iOS 伪装异常 ===
@@ -1373,6 +1376,74 @@ reg('环境验证','navigator.plugins',async()=>{
   else if(isPC()&&list.length===0)
     report('navigator.plugins','info','桌面端无插件',d);
   else report('navigator.plugins','pass',`${list.length}个插件`,d);
+});
+
+reg('环境验证','touchSupport 三元组',async()=>{
+  // FingerprintJS: maxTouchPoints + createEvent("TouchEvent") + ontouchstart
+  // 真机=(5+,T,T), PC Chrome=(10,F,F), 模拟器=异常组合
+  const d={maxTouchPoints:navigator.maxTouchPoints||0};
+  try{document.createEvent('TouchEvent');d.touchEvent=true}catch(e){d.touchEvent=false}
+  d.touchStart='ontouchstart' in window;
+  const isClaimed=isMobile()||isAndroid()||/android|mobile/i.test(navigator.userAgent);
+  if(isClaimed&&!d.touchEvent&&!d.touchStart)
+    report('touchSupport 三元组','risk',`声称移动端但 touchEvent=${d.touchEvent} touchStart=${d.touchStart} (非触摸设备)`,d);
+  else if(isClaimed&&d.maxTouchPoints===0)
+    report('touchSupport 三元组','risk','声称移动端但 maxTouchPoints=0',d);
+  else if(!isClaimed&&d.touchEvent&&d.touchStart&&d.maxTouchPoints>=5)
+    report('touchSupport 三元组','info','桌面端有完整触摸能力',d);
+  else report('touchSupport 三元组','pass',`(${d.maxTouchPoints}, ${d.touchEvent?'T':'F'}, ${d.touchStart?'T':'F'})`,d);
+});
+
+reg('环境验证','CPU 架构指纹',async()=>{
+  // Float32Array 字节布局在 x86 和 ARM 上可能不同
+  // CPU 指令集级别信号, 不可伪装
+  const d={};
+  try{
+    const buf=new ArrayBuffer(4);
+    const f32=new Float32Array(buf);
+    const u8=new Uint8Array(buf);
+    f32[0]=1.0000001192092896;
+    d.bytes=[u8[0],u8[1],u8[2],u8[3]];
+    d.isLittleEndian=(u8[0]!==0x3F);
+    // 检查 platform 一致性
+    const pf=navigator.platform;
+    const claimsARM=/arm|aarch64/i.test(pf);
+    const claimsx86=/i[36]86|x86_64/i.test(pf);
+    d.platform=pf;d.claimsARM=claimsARM;d.claimsx86=claimsx86;
+    report('CPU 架构指纹','info',`bytes=[${d.bytes}] LE=${d.isLittleEndian} (采集)`,d);
+  }catch(e){report('CPU 架构指纹','info','检测异常',{error:e.message})}
+});
+
+reg('环境验证','userAgentData.mobile',async()=>{
+  // Chrome 引擎内部标志, DevTools 模拟不改变此值
+  const d={};
+  if(!navigator.userAgentData){
+    return report('userAgentData.mobile','info','API 不可用 (非 Chromium)',d);
+  }
+  d.mobile=navigator.userAgentData.mobile;
+  d.platform=navigator.userAgentData.platform;
+  d.brands=(navigator.userAgentData.brands||[]).map(b=>b.brand+'/'+b.version);
+  const isClaimed=isMobile()||isAndroid()||/android|mobile/i.test(navigator.userAgent);
+  if(isClaimed&&d.mobile===false)
+    report('userAgentData.mobile','risk',`UA声称移动端但 userAgentData.mobile=false (引擎级标志)`,d);
+  else if(!isClaimed&&d.mobile===true)
+    report('userAgentData.mobile','info','桌面UA但 userAgentData.mobile=true',d);
+  else report('userAgentData.mobile','pass',`mobile=${d.mobile} platform=${d.platform}`,d);
+});
+
+reg('环境验证','screenFrame 边框',async()=>{
+  // FingerprintJS: 屏幕四边不可用区域
+  // 真机底部有导航栏(48-90px), PC有右侧边距
+  const d={};
+  d.frameTop=window.screenTop||0;
+  d.frameLeft=window.screenLeft||0;
+  d.frameRight=screen.width-screen.availWidth-(window.screenLeft||0);
+  d.frameBottom=screen.height-screen.availHeight;
+  d.frame=[d.frameTop,d.frameRight,d.frameBottom,d.frameLeft];
+  const isClaimed=isMobile()||isAndroid();
+  if(isClaimed&&d.frameRight>20)
+    report('screenFrame 边框','risk',`移动端右侧边距${d.frameRight}px (桌面特征)`,d);
+  else report('screenFrame 边框','pass',`frame=[${d.frame.join(',')}]`,d);
 });
 
 // ---- 指纹采集 ----
