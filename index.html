@@ -189,7 +189,7 @@ function identifyDevice() {
   s.signals.hasBattery = !!navigator.getBattery;
   s.signals.hasConnection = !!navigator.connection;
   s.signals.hasAccelerometer = !!window.Accelerometer;
-  s.signals.hasDMPermission = typeof DeviceMotionEvent?.requestPermission === 'function';
+  s.signals.hasDMPermission = typeof window.DeviceMotionEvent !== 'undefined' && typeof window.DeviceMotionEvent.requestPermission === 'function';
   s.signals.hasChrome = !!window.chrome;
   s.signals.maxTouch = navigator.maxTouchPoints || 0;
   s.signals.cores = navigator.hardwareConcurrency || 0;
@@ -294,7 +294,8 @@ function renderProfile(p) {
     : `置信度 ${p.confidence}% | ` + Object.entries(p.scores).map(([k,v])=>`${k}${v}%`).join(' ');
   document.getElementById('pf-conf').textContent = confLine;
   const tags = document.getElementById('pf-tags');
-  tags.innerHTML = p.tags.map(t=>`<span class="tag">${t}</span>`).join('');
+  tags.innerHTML = '';
+  p.tags.forEach(t => { const sp = document.createElement('span'); sp.className = 'tag'; sp.textContent = t; tags.appendChild(sp); });
 }
 
 // ==================== 辅助 ====================
@@ -341,13 +342,13 @@ reg('环境验证','电池状态',async()=>{
   }
   const b=await navigator.getBattery();
   const d={level:b.level,charging:b.charging,chargingTime:b.chargingTime,dischargingTime:b.dischargingTime};
-  if(isPC()) return report('电池状态','pass',`桌面端 ${Math.round(b.level*100)}%`,d);
+  if(isPC()) return report('电池状态','info',`桌面端 ${Math.round(b.level*100)}% (跳过)`,d);
   if(b.level===1&&b.charging&&b.chargingTime===0) report('电池状态','risk','电量100%+永充+chargingTime=0 (模拟器)',d);
   else report('电池状态','pass',`${Math.round(b.level*100)}% ${b.charging?'充电中':'未充电'}`,d);
 });
 
 reg('环境验证','传感器',async()=>{
-  if(isPC()) return report('传感器','pass','桌面端无需传感器',{skip:true});
+  if(isPC()) return report('传感器','info','桌面端无需传感器 (跳过)',{skip:true});
   if(isIOS()){
     const has=typeof DeviceMotionEvent?.requestPermission==='function';
     return report('传感器',has?'pass':'info',has?'iOS DeviceMotion API 可用':'iOS 传感器需用户授权',{iosPermission:has});
@@ -370,7 +371,7 @@ reg('环境验证','传感器',async()=>{
 });
 
 reg('环境验证','DeviceMotion',async()=>{
-  if(isPC()) return report('DeviceMotion','pass','桌面端无需运动传感器',{skip:true});
+  if(isPC()) return report('DeviceMotion','info','桌面端无需运动传感器 (跳过)',{skip:true});
   if(isIOS()&&typeof DeviceMotionEvent?.requestPermission==='function')
     return report('DeviceMotion','pass','iOS 需用户手势授权 (正常)',{ios:true});
   return new Promise(rv=>{
@@ -426,7 +427,7 @@ reg('指纹采集','Canvas 指纹',async()=>{
   x.fillText('ACD Fingerprint! 🎮',2,45);x.fillStyle='rgba(102,204,0,.7)';x.fillText('Canvas FP',4,17);
   const hash=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(c.toDataURL()));
   const fp=Array.from(new Uint8Array(hash)).map(b=>b.toString(16).padStart(2,'0')).join('').substring(0,32);
-  report('Canvas 指纹','pass',fp,{hash:fp});
+  report('Canvas 指纹','info',`${fp} (采集)`,{hash:fp});
 });
 
 reg('指纹采集','AudioContext 指纹',async()=>{
@@ -438,7 +439,7 @@ reg('指纹采集','AudioContext 指纹',async()=>{
     osc.connect(comp);comp.connect(ac.destination);osc.start(0);
     const buf=await ac.startRendering();const data=buf.getChannelData(0);
     let sum=0;for(let i=4500;i<5000;i++)sum+=Math.abs(data[i]);
-    report('AudioContext 指纹','pass','Hash: '+sum.toFixed(8),{fp:sum.toFixed(10)});
+    report('AudioContext 指纹','info','Hash: '+sum.toFixed(8)+' (采集)',{fp:sum.toFixed(10)});
   }catch(e){report('AudioContext 指纹','info','不可用',e.message)}
 });
 
@@ -499,7 +500,9 @@ reg('网络与位置','WebRTC IP',async()=>{
         const m=/([0-9]{1,3}(\.[0-9]{1,3}){3})/.exec(e.candidate.candidate);if(m)ips.add(m[1]);
       };
       pc.createOffer().then(o=>pc.setLocalDescription(o));
-      setTimeout(()=>{try{pc.close()}catch(e){}rv()},3000);
+      setTimeout(()=>{try{pc.close()}catch(e){}
+        if(!results['WebRTC IP']) report('WebRTC IP','info','检测超时',{});
+        rv()},3000);
     }catch(e){report('WebRTC IP','pass','WebRTC 不可用',e.message);rv()}
   });
 });
@@ -723,7 +726,7 @@ reg('深度指纹','Math 精度指纹',async()=>{
   const d={hash:h,platform:pf,sample_sin:tests.sin,sample_exp:tests.exp};
   // x86 模拟器通过翻译层跑 ARM 代码, Math 精度通常与 x86 native 不同
   // 这里只采集指纹上报, 因为没有标准"ARM Math值"可对比
-  report('Math 精度指纹','pass',`Hash: ${h}`,d);
+  report('Math 精度指纹','info',`Hash: ${h} (采集,无基线对比)`,d);
 });
 
 reg('深度指纹','WebGL 渲染指纹',async()=>{
@@ -744,7 +747,7 @@ reg('深度指纹','WebGL 渲染指纹',async()=>{
   const px=new Uint8Array(64*64*4);gl.readPixels(0,0,64,64,gl.RGBA,gl.UNSIGNED_BYTE,px);
   const hash=await crypto.subtle.digest('SHA-256',px);
   const h=Array.from(new Uint8Array(hash)).map(b=>b.toString(16).padStart(2,'0')).join('').substring(0,32);
-  report('WebGL 渲染指纹','pass',h,{hash:h});
+  report('WebGL 渲染指纹','info',`${h} (采集,无基线对比)`,{hash:h});
 });
 
 reg('深度指纹','AudioContext 延迟',async()=>{
@@ -794,7 +797,7 @@ reg('深度指纹','Performance 计时',async()=>{
   const elapsed=performance.now()-t0;
   const d={iterations,elapsedMs:elapsed.toFixed(2),opsPerMs:Math.round(iterations/elapsed),dummy:x};
   // 纯粹采集, 不做风险判定 (不同设备性能差异大)
-  report('Performance 计时','pass',`${elapsed.toFixed(0)}ms / ${(iterations/1000)}K ops`,d);
+  report('Performance 计时','info',`${elapsed.toFixed(0)}ms / ${(iterations/1000)}K ops (采集)`,d);
 });
 
 reg('深度指纹','平台架构验证',async()=>{

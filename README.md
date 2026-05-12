@@ -1,34 +1,64 @@
-# Anti-Cheat Detector H5
+# Anti-Cheat Detector H5 v2
 
-基于 WPK (WePoker) 逆向分析的反作弊检测方案，H5 网页端复现。
+基于 WPK (WePoker) 逆向分析的反作弊检测方案 H5 复现。
 
-单个 HTML 文件，零依赖，双击即开。
+**定位**: PoC / 检测能力演示。不适合直接用于生产环境的拦截/放行决策。
 
-## 检测项 (20+)
+## 架构
 
-| 类别 | 检测项 |
-|------|--------|
-| 模拟器检测 | WebGL 渲染器、电池状态、传感器、DeviceMotion、屏幕特征、Performance 精度、硬件信息 |
-| 设备指纹 | Canvas 指纹、AudioContext 指纹、UA/Platform 一致性、时区语言、WebGL 参数指纹 |
-| 位置与网络 | Geolocation、WebRTC IP 泄露、网络连接信息 |
-| 工具检测 | 端口扫描 (7125/7126/Frida/ADB)、自动化框架、DevTools、Proxy/VPN |
-| 注入检测 | 触摸事件来源 (isTrusted)、按键事件注入 |
-| 完整性检测 | 原生函数完整性、toString 防护、iframe 沙盒 |
-| 行为分析 | 插件数量、navigator 属性异常、Storage 可用性 |
+两阶段检测：
+
+1. **设备画像** — 多信号交叉分类（iPhone / Android / PC / 模拟器 / 云真机）
+   - 硬证据短路：x86 Android、软件渲染 GPU 等确定性信号直接判定 100% 模拟器
+   - 无硬证据时走加权评分
+2. **针对性检测** — 基于设备类型选择规则集，避免跨平台误判
+
+## 检测项
+
+| 类别 | 检测项 | 状态类型 |
+|------|--------|---------|
+| 环境验证 | WebGL 渲染器、GPU/平台一致性、电池、传感器、DeviceMotion、硬件信息、屏幕、媒体设备 | pass/risk |
+| 指纹采集 | Canvas、AudioContext、字体、UA/Platform、时区语言、WebGL 参数 | info(采集) |
+| 网络与位置 | Geolocation、WebRTC IP、数据中心 IP、Proxy/VPN | pass/risk |
+| 工具检测 | 端口扫描(WPK 7125/7126 + Frida + ADB)、自动化框架、Headless 深度、DevTools、浏览器版本 | pass/risk |
+| 完整性 | 原生函数、Console 劫持、iframe、Service Worker | pass/risk |
+| 行为分析 | WebView、多开检测、属性一致性(Lie Detection)、Storage、页面生命周期、FP/FCP/LCP | pass/risk/info |
+| 深度指纹 | Math 精度、WebGL 渲染、AudioContext 延迟、屏幕物理尺寸、Vibration、Performance 计时、平台架构、WebGL 扩展、时间源精度 | pass/risk/info |
+| 综合判定 | 设备类型概率、云真机判定 | pass/risk |
+
+## 评分
+
+- `pass`: 检测通过，计入安全分
+- `risk`: 检测到风险，计入风险分
+- `info`: 采集/跳过/不可用，**不影响评分**
+- 综合评分 = `100 × pass / (pass + risk)`
+- 最终判定结合设备画像：画像=模拟器时无论通过率多高都标风险
 
 ## 使用
 
-浏览器打开 `index.html`，自动运行所有检测，显示综合评分和每项结果。
+需通过 HTTP 服务运行（`file://` 下部分检测受 CORS 限制）：
 
-支持导出 JSON 报告。
+```bash
+# 方式1: Python
+python -m http.server 8000
+
+# 方式2: Node.js
+npx serve .
+
+# 方式3: GitHub Pages
+# https://linusteller.github.io/anticheat-h5/
+```
+
+## 局限性
+
+- 纯采集型指纹（Canvas/Audio/Math/WebGL渲染）没有基线样本库，无法做真正的判定
+- MuMu 等 ARM 模拟器在浏览器中没有硬矛盾信号（armv81 + Adreno 640 与真机一致），当前检测能力有限
+- 无自动化测试、无 CI、无多设备回归样本
+- 端口扫描会在浏览器控制台产生连接失败日志（预期行为）
 
 ## 技术来源
 
-基于对 WPK 5.8.19 APK 的完整逆向分析，还原了以下机制：
-- `FindEmulator.java` 模拟器特征扫描
-- `MotionEventsManager` 触摸事件 Hook
-- `KeyEventsManager.onKeyPreImeAntiKeyInjection()` 按键注入检测
-- `BatteryChangedReceiver` 电池状态监控
-- JS 层本地端口扫描 (7125/7126)
-- `DeviceUuidFactory` 设备指纹生成
-- AppDome 原生函数完整性校验
+- WPK APK v5.8.19 逆向分析（AppDome v5.16 + JS 层解密）
+- WPK H5 实测分析（CDP Runtime.evaluate 穷举 639+ 函数）
+- FingerprintJS BotD 开源检测方法
+- CreepJS Lie Detection 思想
