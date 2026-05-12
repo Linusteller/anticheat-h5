@@ -108,6 +108,107 @@ function renderCard(name) {
 }
 function H(n){let h=0;for(let i=0;i<n.length;i++)h=((h<<5)-h+n.charCodeAt(i))|0;return Math.abs(h)}
 
+let lastVerdict = null;
+
+function computeFinalVerdict(results, deviceProfile) {
+  const v = Object.values(results);
+  const passC = v.filter(x=>x.status==='pass').length;
+  const riskC = v.filter(x=>x.status==='risk').length;
+  const infoC = v.filter(x=>x.status==='info').length;
+
+  // 基础分: 检测通过率 × 设备可信度
+  const scored = passC + riskC;
+  const checkRate = scored === 0 ? 100 : 100 * passC / scored;
+  const emuConf = (deviceProfile?.scores?.['模拟器'] || 0) / 100;
+  const cloudConf = (deviceProfile?.scores?.['云真机'] || 0) / 100;
+  const riskConf = Math.max(emuConf, cloudConf);
+  const rawScore = Math.max(0, Math.min(100, Math.round(checkRate * (1 - riskConf))));
+
+  const profileType = deviceProfile?.type || 'unknown';
+  const emuPct = deviceProfile?.scores?.['模拟器'] || 0;
+  const cloudPct = deviceProfile?.scores?.['云真机'] || 0;
+  const isSafeType = profileType==='iPhone'||profileType==='Android'||profileType==='PC';
+
+  // === Critical Risk 分类 ===
+  const criticalRisks = [];
+  const hd = results['Headless 深度检测']?.detail;
+  if (hd?.critical?.length) hd.critical.forEach(c => criticalRisks.push(c));
+  if (results['自动化框架']?.status === 'risk') criticalRisks.push('自动化框架');
+  if (results['端口扫描 (WPK)']?.detail?.open?.some(p=>[27042,27043].includes(p))) criticalRisks.push('Frida端口');
+  if (results['端口扫描 (WPK)']?.detail?.open?.some(p=>[7125,7126].includes(p))) criticalRisks.push('WPK代理端口');
+  if (results['原生函数']?.status === 'risk') criticalRisks.push('原生函数被篡改');
+
+  // === 移动端组合异常 (Android) ===
+  let mobileAnomalies = 0;
+  if (profileType === 'Android' || (isSafeType && /android/i.test(navigator.userAgent))) {
+    if (results['电池状态']?.status === 'risk' || (!navigator.getBattery && /android/i.test(navigator.userAgent))) mobileAnomalies++;
+    if (results['传感器']?.status === 'risk') mobileAnomalies++;
+    if (results['DeviceMotion']?.status === 'risk') mobileAnomalies++;
+    if (results['媒体设备']?.status === 'risk') mobileAnomalies++;
+    if (results['Vibration API']?.status === 'risk') mobileAnomalies++;
+    const mm = results['matchMedia 特征']?.detail;
+    if (mm && mm['hover'] && mm['pointer-fine'] && !mm['pointer-coarse']) mobileAnomalies++;
+    if (results['平台 API 三信号']?.status === 'risk') mobileAnomalies++;
+    if (results['navigator.plugins']?.status === 'risk') mobileAnomalies++;
+    if (results['纹理压缩扩展']?.status === 'risk') mobileAnomalies++;
+  }
+
+  // === iOS 伪装异常 ===
+  let iosAnomalies = 0;
+  if (profileType === 'iPhone' || /iphone|ipad/i.test(navigator.userAgent)) {
+    if (!deviceProfile?.signals?.isAppleGPU && deviceProfile?.signals?.gpu) iosAnomalies++;
+    if (!!window.chrome) iosAnomalies++;
+    const mm = results['matchMedia 特征']?.detail;
+    if (mm && mm['hover'] && mm['pointer-fine'] && !mm['pointer-coarse']) iosAnomalies++;
+    if (results['DeviceMotion']?.status === 'risk') iosAnomalies++;
+  }
+
+  // === 综合 score 上限 ===
+  let finalScore = rawScore;
+  // critical risk
+  if (criticalRisks.length >= 3) finalScore = Math.min(finalScore, 15);
+  else if (criticalRisks.length >= 2) finalScore = Math.min(finalScore, 30);
+  else if (criticalRisks.length >= 1) finalScore = Math.min(finalScore, 49);
+  // 移动端组合异常
+  if (mobileAnomalies >= 5) finalScore = Math.min(finalScore, 15);
+  else if (mobileAnomalies >= 4) finalScore = Math.min(finalScore, 30);
+  else if (mobileAnomalies >= 3) finalScore = Math.min(finalScore, 49);
+  // iOS 伪装
+  if (iosAnomalies >= 2) finalScore = Math.min(finalScore, 49);
+  else if (iosAnomalies >= 1 && !deviceProfile?.signals?.isAppleGPU && deviceProfile?.signals?.gpu) finalScore = Math.min(finalScore, 49);
+  // riskC 过多
+  if (riskC >= 5) finalScore = Math.min(finalScore, 49);
+  else if (riskC >= 3) finalScore = Math.min(finalScore, 79);
+
+  // === Verdict ===
+  let verdict, verdictColor;
+  if (!isSafeType && (emuPct >= 50 || cloudPct >= 50)) {
+    verdict = `${profileType} (置信度${Math.max(emuPct,cloudPct)}%)`;
+    verdictColor = emuPct>=70||cloudPct>=70 ? 'var(--red)' : 'var(--yellow)';
+  } else if (criticalRisks.length) {
+    verdict = `高风险设备 (${criticalRisks[0]})`;
+    verdictColor = 'var(--red)';
+  } else if (mobileAnomalies >= 3) {
+    verdict = `高风险设备 (${mobileAnomalies}项移动端异常)`;
+    verdictColor = 'var(--red)';
+  } else if (iosAnomalies >= 2) {
+    verdict = `存在风险 (iOS伪装${iosAnomalies}项异常)`;
+    verdictColor = 'var(--yellow)';
+  } else if (finalScore >= 80 && isSafeType && riskC <= 2) {
+    verdict = '设备安全';
+    verdictColor = 'var(--green)';
+  } else if (finalScore >= 50) {
+    verdict = '存在风险';
+    verdictColor = 'var(--yellow)';
+  } else {
+    verdict = '高风险设备';
+    verdictColor = 'var(--red)';
+  }
+
+  return { rawScore, finalScore, verdict, verdictColor, passC, riskC, infoC,
+    criticalRisks, mobileAnomalies, iosAnomalies, runMode: location.protocol };
+}
+
 function updateScore() {
   const v = Object.values(results);
   if (!v.length) return;
@@ -117,10 +218,8 @@ function updateScore() {
   document.getElementById('c-pass').textContent = passC;
   document.getElementById('c-risk').textContent = riskC;
   document.getElementById('c-info').textContent = infoC;
-  // 评分: 检测通过率 × 设备可信度
-  // 检测通过率 = pass/(pass+risk), 反映个体检测结果
-  // 设备可信度 = 1 - 模拟器/云真机置信度, 反映设备画像结论
-  // 两者相乘: 模拟器 100% → 分数归零; 真机 → 不受影响
+
+  // 实时显示基础分
   const scored = passC + riskC;
   const checkRate = scored === 0 ? 100 : 100 * passC / scored;
   const emuConf = (deviceProfile?.scores?.['模拟器'] || 0) / 100;
@@ -132,66 +231,18 @@ function updateScore() {
   arc.style.stroke = score >= 80 ? 'var(--green)' : score >= 50 ? 'var(--yellow)' : 'var(--red)';
   document.getElementById('s-val').textContent = score;
   document.getElementById('s-val').style.color = arc.style.stroke;
+
   if (done >= checks.length) {
-    // 最终判定: 设备画像 + 检测通过率 + 移动端组合异常 联合决策
-    const profileType = deviceProfile?.type || 'unknown';
-    const emuConf = deviceProfile?.scores?.['模拟器'] || 0;
-    const cloudConf = deviceProfile?.scores?.['云真机'] || 0;
-    const isSafeType = profileType==='iPhone'||profileType==='Android'||profileType==='PC';
-
-    // 移动端组合异常信号: Android 设备缺少多个硬件 API = 模拟器高度可疑
-    let mobileAnomalies = 0;
-    if (profileType === 'Android' || (isSafeType && /android/i.test(navigator.userAgent))) {
-      if (results['电池状态']?.status === 'risk' || (!navigator.getBattery && /android/i.test(navigator.userAgent))) mobileAnomalies++;
-      if (results['传感器']?.status === 'risk') mobileAnomalies++;
-      if (results['DeviceMotion']?.status === 'risk') mobileAnomalies++;
-      if (results['媒体设备']?.status === 'risk') mobileAnomalies++;
-      if (results['Vibration API']?.status === 'risk') mobileAnomalies++;
-      // hover + fine pointer = 桌面行为, 移动端不应有
-      const mm = results['matchMedia 特征']?.detail;
-      if (mm && mm['hover'] && mm['pointer-fine'] && !mm['pointer-coarse']) mobileAnomalies++;
-      // 平台API三信号: 0/3移动信号 = 桌面环境
-      if (results['平台 API 三信号']?.status === 'risk') mobileAnomalies++;
-      // plugins: 移动端有插件 = 桌面伪装
-      if (results['navigator.plugins']?.status === 'risk') mobileAnomalies++;
-      // 纹理压缩: 移动端有桌面纹理格式 = 桌面GPU
-      if (results['纹理压缩扩展']?.status === 'risk') mobileAnomalies++;
-    }
-
-    // 异常信号上限: 多个硬件 API 缺失 = 伪装模拟器
-    let finalScore = score;
-    if (mobileAnomalies >= 5) finalScore = Math.min(finalScore, 15);
-    else if (mobileAnomalies >= 4) finalScore = Math.min(finalScore, 30);
-    else if (mobileAnomalies >= 3) finalScore = Math.min(finalScore, 49);
-
-    // 如果被限制，更新显示
-    if (finalScore !== score) {
-      arc.style.strokeDashoffset = 364.4 * (1 - finalScore / 100);
-      arc.style.stroke = finalScore >= 80 ? 'var(--green)' : finalScore >= 50 ? 'var(--yellow)' : 'var(--red)';
-      document.getElementById('s-val').textContent = finalScore;
-      document.getElementById('s-val').style.color = arc.style.stroke;
-    }
-
-    let verdict, verdictColor;
-    if (!isSafeType && (emuConf >= 50 || cloudConf >= 50)) {
-      verdict = `${profileType} (置信度${Math.max(emuConf,cloudConf)}%)`;
-      verdictColor = emuConf>=70||cloudConf>=70 ? 'var(--red)' : 'var(--yellow)';
-    } else if (mobileAnomalies >= 3) {
-      verdict = `高风险设备 (${mobileAnomalies}项移动端异常)`;
-      verdictColor = 'var(--red)';
-    } else if (finalScore >= 80 && isSafeType && riskC <= 2) {
-      verdict = '设备安全';
-      verdictColor = 'var(--green)';
-    } else if (finalScore >= 50) {
-      verdict = '存在风险';
-      verdictColor = 'var(--yellow)';
-    } else {
-      verdict = '高风险设备';
-      verdictColor = 'var(--red)';
-    }
+    // 所有检测完成 → 统一最终判定
+    lastVerdict = computeFinalVerdict(results, deviceProfile);
+    const fs = lastVerdict.finalScore;
+    arc.style.strokeDashoffset = 364.4 * (1 - fs / 100);
+    arc.style.stroke = fs >= 80 ? 'var(--green)' : fs >= 50 ? 'var(--yellow)' : 'var(--red)';
+    document.getElementById('s-val').textContent = fs;
+    document.getElementById('s-val').style.color = arc.style.stroke;
     const lbl = document.getElementById('s-lbl');
-    lbl.textContent = verdict;
-    lbl.style.color = verdictColor;
+    lbl.textContent = lastVerdict.verdict;
+    lbl.style.color = lastVerdict.verdictColor;
   }
 }
 
@@ -205,7 +256,8 @@ function buildUI() {
 }
 
 function exportJSON() {
-  const d = { timestamp: new Date().toISOString(), userAgent: navigator.userAgent, deviceProfile, results };
+  const d = { timestamp: new Date().toISOString(), userAgent: navigator.userAgent,
+    deviceProfile, verdict: lastVerdict, results };
   const b = new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(b);
   a.download = 'anticheat-' + Date.now() + '.json'; a.click();
@@ -639,18 +691,28 @@ reg('工具检测','自动化框架',async()=>{
 });
 
 reg('工具检测','Headless 深度检测',async()=>{
-  const d={},issues=[];
+  const d={},issues=[],critical=[];
+  // HeadlessChrome UA — 最直接的信号
+  if(/HeadlessChrome/i.test(navigator.userAgent)) critical.push('UA含HeadlessChrome');
+  // navigator.webdriver — Selenium/Puppeteer/Playwright 标志
+  if(navigator.webdriver) critical.push('navigator.webdriver=true');
   // chrome 对象结构
   if(!window.chrome&&isChromeBrowser()) issues.push('无window.chrome');
+  // Chrome UA 但 plugins 为空 (正常Chrome至少有PDF Viewer)
+  if(/Chrome\/\d+/i.test(navigator.userAgent)&&navigator.plugins.length===0&&!isMobile()) issues.push('Chrome UA但plugins为空');
   // Permissions 异常
   try{const np=await navigator.permissions.query({name:'notifications'});d.notifPerm=np.state;
-    if(np.state==='denied'&&Notification.permission==='default') issues.push('Permissions矛盾')}catch(e){}
+    if(np.state==='denied'&&Notification.permission==='default') critical.push('Permissions矛盾')}catch(e){}
   // rtt=0
   if(navigator.connection?.rtt===0) issues.push('rtt=0');
   // outerWidth=0
   if(window.outerWidth===0&&window.outerHeight===0) issues.push('outer=0');
-  d.issues=issues;
-  if(issues.length>=2) report('Headless 深度检测','risk',issues.join('; '),d);
+  // languages 缺失或异常
+  if(!navigator.languages||navigator.languages.length===0) issues.push('languages为空');
+  d.critical=critical;d.issues=issues;
+  const all=critical.concat(issues);
+  if(critical.length) report('Headless 深度检测','risk',critical.concat(issues).join('; '),d);
+  else if(issues.length>=2) report('Headless 深度检测','risk',issues.join('; '),d);
   else if(issues.length) report('Headless 深度检测','info',issues[0],d);
   else report('Headless 深度检测','pass','正常',d);
 });
@@ -1146,7 +1208,7 @@ reg('综合判定','云真机判定',async()=>{
 
 // ==================== 启动 ====================
 async function run(){
-  done=0;Object.keys(results).forEach(k=>delete results[k]);
+  done=0;lastVerdict=null;Object.keys(results).forEach(k=>delete results[k]);
   document.getElementById('prog').style.width='0%';
   document.getElementById('s-val').textContent='--';
   document.getElementById('s-lbl').textContent='设备识别中...';
