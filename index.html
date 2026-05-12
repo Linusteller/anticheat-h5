@@ -2055,6 +2055,43 @@ reg('综合判定','云真机判定',async()=>{
   else report('云真机判定','pass',`${signals.length}/5 信号`,d);
 });
 
+reg('综合判定','IP/GPS 一致性',async()=>{
+  await new Promise(r=>setTimeout(r,800));
+  const ipResult=results['数据中心 IP']?.detail;
+  const geoResult=results['Geolocation']?.detail;
+  const d={ipAvailable:!!ipResult?.ip,geoAvailable:!!geoResult?.lat};
+  if(!ipResult?.ip||!geoResult?.lat){
+    const missing=[];
+    if(!ipResult?.ip) missing.push('IP位置');
+    if(!geoResult?.lat) missing.push('GPS');
+    return report('IP/GPS 一致性','info',`${missing.join('+')}不可用, 无法交叉验证`,d);
+  }
+  // ipapi.co 返回的坐标在 info.latitude/longitude, 但我们存的是 city/country
+  // 需要额外请求带坐标的数据, 或者用已有结果
+  // ipapi.co/json/ 返回 latitude/longitude 字段
+  let ipLat,ipLng;
+  try{
+    const ctrl=new AbortController();const t=setTimeout(()=>ctrl.abort(),5000);
+    const r=await fetch('https://ipapi.co/json/',{signal:ctrl.signal});clearTimeout(t);
+    const info=await r.json();
+    ipLat=info.latitude;ipLng=info.longitude;
+    d.ipLat=ipLat;d.ipLng=ipLng;d.ipCity=info.city;d.ipCountry=info.country_name;
+  }catch(e){
+    return report('IP/GPS 一致性','info','IP坐标获取失败',{error:e.message});
+  }
+  d.gpsLat=geoResult.lat;d.gpsLng=geoResult.lng;
+  // Haversine 公式算两点距离 (km)
+  const R=6371;
+  const dLat=(geoResult.lat-ipLat)*Math.PI/180;
+  const dLng=(geoResult.lng-ipLng)*Math.PI/180;
+  const a=Math.sin(dLat/2)**2+Math.cos(ipLat*Math.PI/180)*Math.cos(geoResult.lat*Math.PI/180)*Math.sin(dLng/2)**2;
+  const dist=R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+  d.distanceKm=Math.round(dist);
+  if(dist>500) report('IP/GPS 一致性','risk',`IP与GPS距离${Math.round(dist)}km (VPN/代理?)`,d);
+  else if(dist>200) report('IP/GPS 一致性','info',`IP与GPS距离${Math.round(dist)}km (偏差较大)`,d);
+  else report('IP/GPS 一致性','pass',`IP与GPS距离${Math.round(dist)}km`,d);
+});
+
 // ==================== 启动 ====================
 async function run(){
   done=0;lastVerdict=null;Object.keys(results).forEach(k=>delete results[k]);
