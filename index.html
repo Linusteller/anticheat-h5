@@ -706,6 +706,129 @@ reg('行为分析','FP/FCP/LCP',async()=>{
   });
 });
 
+// ---- v8 新增检测 (来源: WPK H5 v8 CDP 实测报告) ----
+
+reg('v8 新增','eval 锁定检测',async()=>{
+  // WPK H5: eval 被 isValidCode 拦截 + Object.defineProperty configurable:false
+  const d={};
+  try{
+    const desc=Object.getOwnPropertyDescriptor(window,'eval');
+    d.configurable=desc?.configurable;
+    d.writable=desc?.writable;
+    const isNative=/\[native code\]/.test(Function.prototype.toString.call(window.eval));
+    d.isNative=isNative;
+    if(desc&&desc.configurable===false&&desc.writable===false)
+      report('eval 锁定检测','risk','eval 被锁定 (configurable:false, writable:false)',d);
+    else if(!isNative)
+      report('eval 锁定检测','risk','eval 被覆写',d);
+    else
+      report('eval 锁定检测','pass','eval 原生且未锁定',d);
+  }catch(e){report('eval 锁定检测','info','检测异常',e.message)}
+});
+
+reg('v8 新增','CSP 安全策略',async()=>{
+  // WPK H5 v8: 无 CSP → 任何脚本可注入
+  const d={};
+  const meta=document.querySelector('meta[http-equiv="Content-Security-Policy"]');
+  d.metaCSP=meta?.content||null;
+  // 尝试通过 fetch 自身页面检查响应头 (同源)
+  try{
+    const r=await fetch(location.href,{method:'HEAD',cache:'no-store'});
+    d.headerCSP=r.headers.get('Content-Security-Policy')||null;
+    d.headerXFO=r.headers.get('X-Frame-Options')||null;
+  }catch(e){d.fetchError=e.message}
+  const hasCSP=!!(d.metaCSP||d.headerCSP);
+  if(!hasCSP) report('CSP 安全策略','info','无 CSP 策略 (允许任意脚本注入)',d);
+  else report('CSP 安全策略','pass',`CSP: ${(d.metaCSP||d.headerCSP).substring(0,50)}`,d);
+});
+
+reg('v8 新增','注入脚本检测',async()=>{
+  // WPK H5: loadPageInfo() 收集所有 <script> 标签检测注入
+  const scripts=document.querySelectorAll('script');
+  const d={total:scripts.length,inline:0,external:0,list:[]};
+  scripts.forEach(s=>{
+    if(s.src){d.external++;d.list.push(s.src.substring(0,80))}
+    else{d.inline++;d.list.push('(inline '+s.textContent.length+' chars)')}
+  });
+  // 当前页面是单文件, 只应有 1 个 inline script
+  // 如果有外部 script 或多个 inline, 可能被注入
+  if(d.external>0) report('注入脚本检测','risk',`检测到 ${d.external} 个外部脚本`,d);
+  else if(d.inline>2) report('注入脚本检测','info',`${d.inline} 个内联脚本`,d);
+  else report('注入脚本检测','pass',`${d.total} 个脚本 (${d.inline} 内联)`,d);
+});
+
+reg('v8 新增','XHR/WS 拦截检测',async()=>{
+  // WPK H5: checkassets 拦截了 XHR.open 和 WebSocket.send
+  const d={};
+  const fns={
+    'XHR.open':XMLHttpRequest.prototype.open,
+    'XHR.send':XMLHttpRequest.prototype.send,
+    'WS.send':WebSocket.prototype.send,
+    'fetch':window.fetch
+  };
+  const tampered=[];
+  for(const[n,f]of Object.entries(fns)){
+    try{
+      const s=Function.prototype.toString.call(f);
+      d[n]=s.substring(0,40);
+      if(!/\[native code\]/.test(s)) tampered.push(n);
+    }catch(e){tampered.push(n+'(error)')}
+  }
+  if(tampered.length>=2) report('XHR/WS 拦截检测','risk',`${tampered.join(',')} 被拦截`,d);
+  else if(tampered.length) report('XHR/WS 拦截检测','info',`${tampered[0]} 被修改`,d);
+  else report('XHR/WS 拦截检测','pass','网络 API 原生',d);
+});
+
+reg('v8 新增','debugger 计时检测',async()=>{
+  // WPK H5 GeoComply: 插入 debugger 语句, 计时差超阈值=DevTools 打开
+  const d={};
+  try{
+    const threshold=100; // ms
+    const t1=performance.now();
+    // 在 Function 中执行 debugger, DevTools 打开时会暂停
+    (new Function('debugger'))();
+    const t2=performance.now();
+    d.elapsed=t2-t1;
+    d.threshold=threshold;
+    if(d.elapsed>threshold)
+      report('debugger 计时检测','risk',`debugger 暂停 ${d.elapsed.toFixed(0)}ms (DevTools打开)`,d);
+    else
+      report('debugger 计时检测','pass',`${d.elapsed.toFixed(1)}ms (无暂停)`,d);
+  }catch(e){report('debugger 计时检测','info','异常: '+e.message,{})}
+});
+
+reg('v8 新增','matchMedia 特征',async()=>{
+  // WPK H5 FingerprintJS: 8 种 matchMedia 信号
+  const queries={
+    'color-gamut-srgb':window.matchMedia('(color-gamut: srgb)').matches,
+    'color-gamut-p3':window.matchMedia('(color-gamut: p3)').matches,
+    'color-gamut-rec2020':window.matchMedia('(color-gamut: rec2020)').matches,
+    'prefers-reduced-motion':window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+    'prefers-contrast':window.matchMedia('(prefers-contrast: more)').matches,
+    'forced-colors':window.matchMedia('(forced-colors: active)').matches,
+    'inverted-colors':window.matchMedia('(inverted-colors: inverted)').matches,
+    'dynamic-range-high':window.matchMedia('(dynamic-range: high)').matches,
+    'prefers-color-scheme-dark':window.matchMedia('(prefers-color-scheme: dark)').matches,
+    'hover':window.matchMedia('(hover: hover)').matches,
+    'pointer-fine':window.matchMedia('(pointer: fine)').matches,
+    'pointer-coarse':window.matchMedia('(pointer: coarse)').matches,
+  };
+  const d={...queries};
+  // 手机应有 coarse pointer, 无 hover; PC 应有 hover + fine pointer
+  // Headless Chrome 通常没有 hover 和 pointer
+  if(!queries['hover']&&!queries['pointer-fine']&&!queries['pointer-coarse'])
+    report('matchMedia 特征','risk','无 hover/pointer 能力 (Headless?)',d);
+  else{
+    const summary=[];
+    if(queries['color-gamut-p3']) summary.push('P3色域');
+    if(queries['dynamic-range-high']) summary.push('HDR');
+    if(queries['hover']) summary.push('hover');
+    if(queries['pointer-coarse']) summary.push('触摸');
+    if(queries['pointer-fine']) summary.push('精确指针');
+    report('matchMedia 特征','info',summary.join(' + ')||'基础特征',d);
+  }
+});
+
 // ---- 深度指纹 (真实检测能力, 不靠调分) ----
 
 reg('深度指纹','Math 精度指纹',async()=>{
