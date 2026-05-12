@@ -793,7 +793,7 @@ function computeFinalVerdict(results, deviceProfile) {
   const profileType = deviceProfile?.type || 'unknown';
   const emuPct = deviceProfile?.scores?.['模拟器'] || 0;
   const cloudPct = deviceProfile?.scores?.['云真机'] || 0;
-  const isSafeType = profileType==='iPhone'||profileType==='Android'||profileType==='PC';
+  const isSafeType = ['iPhone','iPad','Mac','Windows','Android'].includes(profileType);
 
   // === Critical Risk 分类 ===
   const criticalRisks = [];
@@ -824,7 +824,7 @@ function computeFinalVerdict(results, deviceProfile) {
 
   // === iOS 伪装异常 (只看强矛盾, 不看 iOS 正常缺失的能力) ===
   let iosAnomalies = 0;
-  if (profileType === 'iPhone' || /iphone|ipad/i.test(navigator.userAgent)) {
+  if (['iPhone','iPad'].includes(profileType) || /iphone|ipad/i.test(navigator.userAgent)) {
     if (!deviceProfile?.signals?.isAppleGPU && deviceProfile?.signals?.gpu) iosAnomalies++;
     if (!!window.chrome && !/CriOS|FxiOS|EdgiOS/i.test(navigator.userAgent)) iosAnomalies++;
     const mm = results['matchMedia 特征']?.detail;
@@ -988,8 +988,8 @@ function updateCatCounts() {
 }
 
 function renderProfile(p) {
-  const icons = {iPhone:'🍎',Android:'📱',PC:'💻','模拟器':'⚠️','云真机':'☁️',unknown:'❓'};
-  const tintMap = {iPhone:'--tint-green',Android:'--tint-green',PC:'--tint-blue','模拟器':'--tint-red','云真机':'--tint-orange',unknown:'--tint-blue'};
+  const icons = {iPhone:'🍎',iPad:'📱',Mac:'💻',Windows:'🖥️',Android:'🤖','模拟器':'⚠️','云真机':'☁️',unknown:'❓'};
+  const tintMap = {iPhone:'--tint-green',iPad:'--tint-green',Mac:'--tint-blue',Windows:'--tint-blue',Android:'--tint-green','模拟器':'--tint-red','云真机':'--tint-orange',unknown:'--tint-blue'};
   const iconEl = document.getElementById('hIcon');
   iconEl.textContent = icons[p.type] || '❓';
   iconEl.style.background = `var(${tintMap[p.type] || '--tint-blue'})`;
@@ -1016,7 +1016,7 @@ function renderProfile(p) {
   }
 
   // Probability bars
-  const probColors = {iPhone:'#BF5AF2',Android:'#30D158',PC:'#0A84FF','模拟器':'#FF453A','云真机':'#FF9F0A'};
+  const probColors = {iPhone:'#BF5AF2',iPad:'#AF52DE',Mac:'#5AC8FA',Windows:'#0A84FF',Android:'#30D158','模拟器':'#FF453A','云真机':'#FF9F0A'};
   const probIcons = {iPhone:'🍎',Android:'📱',PC:'💻','模拟器':'⚠️','云真机':'☁️'};
   const probsEl = document.getElementById('probs');
   probsEl.innerHTML = Object.entries(p.scores)
@@ -1178,32 +1178,50 @@ function identifyDevice() {
   s.signals.isDesktopGPU = /nvidia|geforce|radeon|amd|intel.*(iris|uhd|hd)/i.test(s.signals.gpu);
   s.signals.isSoftGPU = /swiftshader|llvmpipe|softpipe|mesa/i.test(s.signals.gpu);
 
-  // --- 分类逻辑 ---
-  let pIPhone=0, pAndroid=0, pPC=0, pEmu=0, pCloud=0;
+  // --- 分类逻辑 (7 种设备类型) ---
+  let pIPhone=0, pIPad=0, pMac=0, pWindows=0, pAndroid=0, pEmu=0, pCloud=0;
+  const isMacPf = /MacIntel|Macintosh/i.test(pf);
+  const hasTouch = s.signals.maxTouch > 1;
+  const screenMax = Math.max(screen.width, screen.height);
 
-  // iOS 信号
-  if (/iphone|ipad|ipod/i.test(ua) || (pf==='MacIntel' && s.signals.maxTouch>1)) pIPhone+=25;
-  if (s.signals.hasDMPermission) pIPhone+=30;
-  if (s.signals.isAppleGPU) pIPhone+=25;
-  if (!s.signals.hasBattery && !s.signals.hasConnection && !s.signals.hasAccelerometer && /iphone|ipad/i.test(ua)) pIPhone+=15;
+  // iPhone 信号
+  if (/iphone|ipod/i.test(ua)) pIPhone+=30;
+  if (isMacPf && hasTouch && screenMax<768) pIPhone+=25;
+  if (s.signals.hasDMPermission) pIPhone+=20;
+  if (s.signals.isAppleGPU && hasTouch && screenMax<768) pIPhone+=20;
+  if (!s.signals.hasBattery && !s.signals.hasConnection && /iphone/i.test(ua)) pIPhone+=10;
   if (s.signals.hasChrome && pIPhone>0) pIPhone-=20;
+
+  // iPad 信号 (iPadOS 13+ UA 伪装成 macOS, 靠 touch+屏幕宽度区分)
+  if (/ipad/i.test(ua)) pIPad+=30;
+  if (isMacPf && hasTouch && screenMax>=768) pIPad+=30;
+  if (s.signals.hasDMPermission && hasTouch) pIPad+=15;
+  if (s.signals.isAppleGPU && hasTouch) pIPad+=15;
+  if (!s.signals.hasBattery && !s.signals.hasConnection && isMacPf && hasTouch) pIPad+=10;
+  if (s.signals.hasChrome && pIPad>0) pIPad-=15;
+
+  // Mac 信号 (macOS 桌面, 无触摸)
+  if (isMacPf && !hasTouch && !/android|mobile/i.test(ua)) pMac+=30;
+  if (s.signals.isAppleGPU && !hasTouch) pMac+=20;
+  if (s.signals.isDesktopGPU && isMacPf) pMac+=15;
+  if (s.signals.cores>=4 && !hasTouch && isMacPf) pMac+=10;
+
+  // Windows / Linux 桌面
+  if (/Win/.test(pf) && !/android|mobile/i.test(ua)) pWindows+=30;
+  if (s.signals.isDesktopGPU && /Win/.test(pf)) pWindows+=20;
+  if (/Win/.test(pf) && s.signals.cores>=4) pWindows+=10;
+  if (/linux/i.test(pf) && !/android/i.test(ua) && !s.signals.isMobileGPU && !isMacPf) pWindows+=20;
 
   // Android 信号
   if (/android/i.test(ua) && /linux arm/i.test(pf)) pAndroid+=25;
   if (s.signals.isMobileGPU && !s.signals.isAppleGPU) pAndroid+=15;
   if (s.signals.hasBattery && s.signals.maxTouch>0 && /android/i.test(ua)) pAndroid+=10;
 
-  // PC 信号
-  if (/Win|Mac/.test(pf) && !/android|mobile/i.test(ua) && !(/MacIntel/.test(pf)&&s.signals.maxTouch>1)) pPC+=30;
-  if (s.signals.isDesktopGPU) pPC+=20;
-  if (s.signals.cores>=8 && s.signals.memory>=8 && !/android|mobile/i.test(ua)) pPC+=10;
-  if (/linux/i.test(pf) && !/android/i.test(ua) && !s.signals.isMobileGPU) pPC+=20;
-
   // 模拟器信号
   if (s.signals.isSoftGPU) pEmu+=35;
   if (/android/i.test(ua) && s.signals.isDesktopGPU) pEmu+=25;
   if (/android/i.test(ua) && /Win/i.test(pf)) pEmu+=30;
-  if (s.signals.isMobileGPU && /Win|Mac/.test(pf) && !/MacIntel.*maxTouch/.test('')) pEmu+=15;
+  if (s.signals.isMobileGPU && /Win/.test(pf)) pEmu+=15;
   if (/android/i.test(ua) && /i[36]86|x86_64/i.test(pf)) pEmu+=35;
   if (s.signals.isMobileGPU && /i[36]86|x86_64/i.test(pf)) pEmu+=20;
   const chrM = ua.match(/Chrome\/(\d+)/);
@@ -1229,10 +1247,10 @@ function identifyDevice() {
   if (s.hardEvidence.length > 0) {
     s.type = '模拟器';
     s.confidence = 100;
-    s.scores = {iPhone:0, Android:0, PC:0, '模拟器':100, '云真机':0};
+    s.scores = {iPhone:0, iPad:0, Mac:0, Windows:0, Android:0, '模拟器':100, '云真机':0};
     s.reason = s.hardEvidence.join(' + ');
   } else {
-    const scores = {iPhone:pIPhone, Android:pAndroid, PC:pPC, '模拟器':pEmu, '云真机':pCloud};
+    const scores = {iPhone:pIPhone, iPad:pIPad, Mac:pMac, Windows:pWindows, Android:pAndroid, '模拟器':pEmu, '云真机':pCloud};
     const total = Math.max(1, Object.values(scores).reduce((a,b)=>a+b,0));
     const best = Object.entries(scores).sort((a,b)=>b[1]-a[1]);
     s.type = best[0][1]>0 ? best[0][0] : 'unknown';
@@ -1255,11 +1273,15 @@ function identifyDevice() {
 
 // ==================== 辅助 ====================
 function isType(t){return deviceProfile?.type===t}
-function isIOS(){return isType('iPhone')}
+function isIOS(){return isType('iPhone')||isType('iPad')}
+function isIPhone(){return isType('iPhone')}
+function isIPad(){return isType('iPad')}
+function isMac(){return isType('Mac')}
 function isAndroid(){return isType('Android')}
-function isPC(){return isType('PC')}
+function isPC(){return isType('Windows')||isType('Mac')}
+function isDesktop(){return isType('Windows')||isType('Mac')}
 function isEmu(){return isType('模拟器')}
-function isMobile(){return isIOS()||isAndroid()}
+function isMobile(){return isIPhone()||isIPad()||isAndroid()}
 function isChromeBrowser(){return /chrome/i.test(navigator.userAgent)&&!/edg|opr|opera/i.test(navigator.userAgent)&&!!window.chrome}
 
 // ==================== 阶段2: 检测项 ====================
@@ -2083,7 +2105,7 @@ reg('综合判定','设备类型概率',async()=>{
   const best=Object.entries(p.scores).sort((a,b)=>b[1]-a[1]);
   const summary=best.filter(([,v])=>v>0).map(([k,v])=>`${k} ${v}%`).join(' | ');
   const top=best[0];
-  const safe=top[0]==='iPhone'||top[0]==='Android'||top[0]==='PC';
+  const safe=['iPhone','iPad','Mac','Windows','Android'].includes(top[0]);
   report('设备类型概率',safe&&top[1]>=50?'pass':'risk',summary,p.scores);
 });
 
