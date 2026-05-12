@@ -195,7 +195,7 @@ function identifyDevice() {
   // PC 信号
   if (/Win|Mac/.test(pf) && !/android|mobile/i.test(ua) && !(/MacIntel/.test(pf)&&s.signals.maxTouch>1)) pPC+=30;
   if (s.signals.isDesktopGPU) pPC+=20;
-  if (s.signals.cores>=8 && s.signals.memory>=8) pPC+=10;
+  if (s.signals.cores>=8 && s.signals.memory>=8 && !/android|mobile/i.test(ua)) pPC+=10;
   if (/linux/i.test(pf) && !/android/i.test(ua) && !s.signals.isMobileGPU) pPC+=20;
 
   // 模拟器信号
@@ -703,17 +703,17 @@ reg('深度指纹','AudioContext 延迟',async()=>{
 });
 
 reg('深度指纹','屏幕物理尺寸',async()=>{
-  // 物理尺寸 = 像素 / DPR / 标准PPI
-  // 模拟器的 DPR 和分辨率组合往往对应不存在的真实设备
   const w=screen.width,h=screen.height,dpr=devicePixelRatio;
-  const physW=w/dpr, physH=h/dpr;
-  // 假设 160dpi CSS 基准, 计算物理对角线 (英寸)
-  const diagPx=Math.sqrt(w*w+h*h);
-  const diagInch=diagPx/dpr/160;
-  const d={width:w,height:h,dpr,physW:Math.round(physW),physH:Math.round(physH),diagInch:diagInch.toFixed(1)};
-  // 手机: 4-7寸, 平板: 7-13寸, PC: >13寸
-  if(isMobile()&&(diagInch<3||diagInch>15)) report('屏幕物理尺寸','risk',`${diagInch.toFixed(1)}寸 (不合理)`,d);
-  else report('屏幕物理尺寸','pass',`~${diagInch.toFixed(1)}寸 ${w}x${h} DPR=${dpr}`,d);
+  // 物理像素 = CSS像素 × DPR
+  const pw=w*dpr, ph=h*dpr;
+  const physDiag=Math.sqrt(pw*pw+ph*ph);
+  // 估算 PPI: 手机通常 350-500, 桌面 90-150
+  const estPPI=isMobile()?420:110;
+  const diagInch=physDiag/estPPI;
+  const d={width:w,height:h,dpr,physPx:`${Math.round(pw)}x${Math.round(ph)}`,diagInch:diagInch.toFixed(1),estPPI};
+  // 手机: 4-7.5寸正常, <3或>10寸异常; 桌面: 10-35寸正常
+  if(isMobile()&&(diagInch<3||diagInch>10)) report('屏幕物理尺寸','info',`~${diagInch.toFixed(1)}寸 (估算, PPI假设${estPPI})`,d);
+  else report('屏幕物理尺寸','pass',`~${diagInch.toFixed(1)}寸 ${Math.round(pw)}x${Math.round(ph)}px`,d);
 });
 
 reg('深度指纹','Vibration API',async()=>{
@@ -782,8 +782,8 @@ reg('深度指纹','时间源精度',async()=>{
   const d={sampleCount:samples.length};
   if(samples.length===0){
     d.precision='无差异样本';
-    if(isMobile()) report('时间源精度','risk','performance.now() 无精度 (异常)',d);
-    else report('时间源精度','info','无差异样本',d);
+    // 移动端浏览器为防 Spectre 降低精度是正常安全措施, 不是异常
+    report('时间源精度','pass','精度已被浏览器安全策略限制 (正常)',d);
   }else{
     const min=Math.min(...samples),avg=samples.reduce((a,b)=>a+b,0)/samples.length;
     d.minDelta=min.toFixed(6);d.avgDelta=avg.toFixed(6);
