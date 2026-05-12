@@ -203,8 +203,11 @@ function identifyDevice() {
   if (/android/i.test(ua) && s.signals.isDesktopGPU) pEmu+=25;
   if (/android/i.test(ua) && /Win/i.test(pf)) pEmu+=30;
   if (s.signals.isMobileGPU && /Win|Mac/.test(pf) && !/MacIntel.*maxTouch/.test('')) pEmu+=15;
+  // x86 平台 + Android = 模拟器 (真机 Android 都是 ARM)
+  if (/android/i.test(ua) && /i[36]86|x86_64/i.test(pf)) pEmu+=35;
+  if (s.signals.isMobileGPU && /i[36]86|x86_64/i.test(pf)) pEmu+=20;
   const chrM = ua.match(/Chrome\/(\d+)/);
-  if (chrM && parseInt(chrM[1])<115 && /android/i.test(ua)) pEmu+=15; // 模拟器常用旧Chrome
+  if (chrM && parseInt(chrM[1])<115 && /android/i.test(ua)) pEmu+=15;
 
   // 云真机信号 (后续阶段2补充)
 
@@ -265,8 +268,10 @@ reg('环境验证','GPU vs 平台一致性',async()=>{
   const d={gpu:gpu?.substring(0,50),platform:pf};
   const issues=[];
   if(/adreno|mali|powervr/i.test(gpu)&&/Win/i.test(pf)) issues.push('手机GPU在Windows');
+  if(/adreno|mali|powervr/i.test(gpu)&&/i[36]86|x86_64|x86/i.test(pf)) issues.push('ARM GPU在x86平台 (模拟器)');
   if(deviceProfile.signals.isDesktopGPU&&/android/i.test(ua)&&!/linux/i.test(pf)) issues.push('桌面GPU声称Android');
   if(isIOS()&&!deviceProfile.signals.isAppleGPU&&gpu) issues.push('声称iOS但非Apple GPU');
+  if(/android/i.test(ua)&&/i[36]86|x86_64/i.test(pf)) issues.push('Android UA但x86平台 (模拟器)');
   d.issues=issues;
   if(issues.length) report('GPU vs 平台一致性','risk',issues.join('; '),d);
   else report('GPU vs 平台一致性','pass','GPU 与平台匹配',d);
