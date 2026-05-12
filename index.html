@@ -126,8 +126,30 @@ function updateScore() {
   document.getElementById('s-val').textContent = score;
   document.getElementById('s-val').style.color = arc.style.stroke;
   if (done >= checks.length) {
-    document.getElementById('s-lbl').textContent =
-      score >= 80 ? '设备安全' : score >= 50 ? '存在风险' : '高风险设备';
+    // 最终判定: 设备画像 + 检测通过率 联合决策
+    const profileType = deviceProfile?.type || 'unknown';
+    const emuConf = deviceProfile?.scores?.['模拟器'] || 0;
+    const cloudConf = deviceProfile?.scores?.['云真机'] || 0;
+    const isSafeType = profileType==='iPhone'||profileType==='Android'||profileType==='PC';
+
+    let verdict, verdictColor;
+    if (!isSafeType && (emuConf >= 50 || cloudConf >= 50)) {
+      // 画像高置信度识别为模拟器/云真机 → 无论通过率多高都标风险
+      verdict = `${profileType} (置信度${Math.max(emuConf,cloudConf)}%)`;
+      verdictColor = emuConf>=70||cloudConf>=70 ? 'var(--red)' : 'var(--yellow)';
+    } else if (score >= 80 && isSafeType) {
+      verdict = '设备安全';
+      verdictColor = 'var(--green)';
+    } else if (score >= 50) {
+      verdict = '存在风险';
+      verdictColor = 'var(--yellow)';
+    } else {
+      verdict = '高风险设备';
+      verdictColor = 'var(--red)';
+    }
+    const lbl = document.getElementById('s-lbl');
+    lbl.textContent = verdict;
+    lbl.style.color = verdictColor;
   }
 }
 
