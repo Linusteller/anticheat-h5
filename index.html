@@ -214,6 +214,38 @@ function _isMobileUA() {
 function _isDesktop() {
   return /Win|Mac|Linux x86/i.test(navigator.platform) && !_isMobileUA();
 }
+function _isIOS() {
+  // 多信号交叉验证，不仅靠 UA（可伪造）
+  const uaHint = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const platformHint = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+  // iOS 独有 API 特征（不可伪造）
+  const hasIOSApis = typeof DeviceMotionEvent?.requestPermission === 'function'  // iOS 13+ 独有
+    || typeof DeviceOrientationEvent?.requestPermission === 'function';
+  // iOS Safari 特有: 不支持这些 API
+  const lacksNonIOSApis = !navigator.getBattery && !navigator.connection && !window.Accelerometer;
+  // WebGL: iOS 用 Apple GPU
+  const c = document.createElement('canvas');
+  const gl = c.getContext('webgl');
+  const dbg = gl?.getExtension('WEBGL_debug_renderer_info');
+  const renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : '';
+  const hasAppleGPU = /apple gpu/i.test(renderer);
+
+  // 至少 2 个信号同时命中才认定为 iOS
+  const signals = [uaHint || platformHint, hasIOSApis, lacksNonIOSApis && (uaHint || platformHint), hasAppleGPU];
+  const score = signals.filter(Boolean).length;
+  return score >= 2;
+}
+function _isSafari() {
+  // Safari 判定也需要交叉验证
+  const ua = navigator.userAgent;
+  const uaIsSafari = /safari/i.test(ua) && !/chrome|chromium|edg|opera|opr|fxios|crios/i.test(ua);
+  if (!uaIsSafari) return false;
+  // Safari 不支持这些 API（Chrome 模拟 Safari UA 仍然会有这些 API）
+  const hasNoChromiumApis = !navigator.connection && !window.Accelerometer;
+  // Safari 没有 window.chrome 对象
+  const noChrome = !window.chrome;
+  return uaIsSafari && (hasNoChromiumApis || noChrome);
+}
 
 // ---- 模拟器检测 ----
 
@@ -236,7 +268,7 @@ reg('模拟器检测', 'WebGL 渲染器', async () => {
 });
 
 reg('模拟器检测', '电池状态', async () => {
-  if (!navigator.getBattery) return report('电池状态', 'warn', 'Battery API 不可用', null);
+  if (!navigator.getBattery) return report('电池状态', _isSafari() || _isIOS() ? 'pass' : 'warn', _isSafari() || _isIOS() ? 'Safari/iOS 不支持 Battery API (正常)' : 'Battery API 不可用', { safari: _isSafari(), ios: _isIOS() });
   const b = await navigator.getBattery();
   const detail = { level: b.level, charging: b.charging, chargingTime: b.chargingTime, dischargingTime: b.dischargingTime, isDesktop: _isDesktop() };
   // 桌面端: 台式机永远满电+插电是正常的
@@ -254,6 +286,17 @@ reg('模拟器检测', '电池状态', async () => {
 reg('模拟器检测', '传感器检测', async () => {
   const sensors = {};
   let missing = 0;
+  // Safari/iOS 不支持 Generic Sensor API，使用 DeviceMotionEvent 替代
+  if (_isSafari() || _isIOS()) {
+    sensors['说明'] = 'Safari 使用 DeviceMotionEvent 替代 Generic Sensor API';
+    const hasDM = typeof DeviceMotionEvent !== 'undefined';
+    const hasDO = typeof DeviceOrientationEvent !== 'undefined';
+    sensors['DeviceMotionEvent'] = hasDM ? '可用' : '不存在';
+    sensors['DeviceOrientationEvent'] = hasDO ? '可用' : '不存在';
+    if (hasDM && hasDO) report('传感器检测', 'pass', 'Safari 传感器 API 可用', sensors);
+    else report('传感器检测', 'warn', 'Safari 传感器 API 部分缺失', sensors);
+    return;
+  }
   const check = (name, Cls) => new Promise(resolve => {
     try {
       if (!Cls) { sensors[name] = 'API不存在'; missing++; resolve(); return; }
@@ -270,7 +313,6 @@ reg('模拟器检测', '传感器检测', async () => {
     check('陀螺仪', window.Gyroscope),
     check('磁力计', window.Magnetometer),
   ]);
-  // 桌面端无传感器是正常的，仅移动端视为风险
   if (missing >= 3 && _isMobileUA()) report('传感器检测', 'risk', '移动端无任何传感器 (模拟器特征)', sensors);
   else if (missing >= 3) report('传感器检测', 'warn', '无传感器 (桌面端正常)', sensors);
   else if (missing >= 2) report('传感器检测', 'warn', `${missing}/3 传感器缺失`, sensors);
@@ -279,15 +321,20 @@ reg('模拟器检测', '传感器检测', async () => {
 
 reg('模拟器检测', 'DeviceMotion 事件', async () => {
   return new Promise(resolve => {
+    // iOS 13+ Safari 需要用户手势触发权限请求
+    if (_isIOS() && typeof DeviceMotionEvent?.requestPermission === 'function') {
+      report('DeviceMotion 事件', 'pass', 'iOS 需要用户授权 DeviceMotion (正常)', { ios: true, needsPermission: true });
+      resolve(); return;
+    }
     let received = false;
     const handler = (e) => {
       received = true;
       window.removeEventListener('devicemotion', handler);
       const a = e.accelerationIncludingGravity || {};
-      if (a.x === null && a.y === null && a.z === null && _isMobileUA())
+      if (a.x === null && a.y === null && a.z === null && _isMobileUA() && !_isIOS())
         report('DeviceMotion 事件', 'risk', '移动端加速度全为null (模拟器)', { x: a.x, y: a.y, z: a.z });
       else if (a.x === null && a.y === null && a.z === null)
-        report('DeviceMotion 事件', 'warn', '加速度为null (桌面端正常)', { x: a.x, y: a.y, z: a.z });
+        report('DeviceMotion 事件', 'warn', '加速度为null', { x: a.x, y: a.y, z: a.z });
       else if (a.x === 0 && a.y === 0 && a.z === 0)
         report('DeviceMotion 事件', 'warn', '加速度全为0', { x: a.x, y: a.y, z: a.z });
       else
@@ -298,8 +345,11 @@ reg('模拟器检测', 'DeviceMotion 事件', async () => {
     setTimeout(() => {
       if (!received) {
         window.removeEventListener('devicemotion', handler);
-        const s = _isMobileUA() ? 'risk' : 'warn';
-        report('DeviceMotion 事件', s, _isMobileUA() ? '移动端无 devicemotion (模拟器)' : '无 devicemotion (桌面端正常)', null);
+        // Safari 桌面端和 iOS 无手势时不触发 devicemotion 是正常的
+        const isNormal = _isDesktop() || _isSafari() || _isIOS();
+        const s = (!isNormal && _isMobileUA()) ? 'risk' : 'warn';
+        report('DeviceMotion 事件', s,
+          isNormal ? '无 devicemotion (桌面/Safari 正常)' : '移动端无 devicemotion (模拟器)', { isDesktop: _isDesktop(), isSafari: _isSafari() });
         resolve();
       }
     }, 2000);
@@ -353,10 +403,11 @@ reg('模拟器检测', '硬件信息', async () => {
   };
   let status = 'pass', msg = `${d.cores}核`;
   if (d.memory !== 'unknown') msg += ` ${d.memory}GB`;
+  else if (_isSafari() || _isIOS()) msg += ' (Safari不暴露内存)';
   msg += ` Touch=${d.maxTouchPoints}`;
-  // 模拟器通常 touch=0 或异常低核心
-  if (d.maxTouchPoints === 0 && /android|mobile/i.test(d.userAgent))
-    { status = 'risk'; msg += ' (声称移动端但无触摸)'; }
+  // 模拟器通常 touch=0 或异常低核心; iOS Safari maxTouchPoints=5 是正常的
+  if (d.maxTouchPoints === 0 && /android/i.test(d.userAgent))
+    { status = 'risk'; msg += ' (声称Android但无触摸)'; }
   else if (d.cores <= 1)
     { status = 'warn'; msg += ' (单核)'; }
   report('硬件信息', status, msg, d);
@@ -507,7 +558,7 @@ reg('位置与网络', 'WebRTC IP 泄露', async () => {
 
 reg('位置与网络', '网络连接信息', async () => {
   const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-  if (!conn) return report('网络连接信息', 'warn', 'Network Information API 不可用', null);
+  if (!conn) return report('网络连接信息', _isSafari() || _isIOS() ? 'pass' : 'warn', _isSafari() || _isIOS() ? 'Safari 不支持 Network API (正常)' : 'Network Information API 不可用', { safari: _isSafari() });
   const d = {
     effectiveType: conn.effectiveType, downlink: conn.downlink,
     rtt: conn.rtt, saveData: conn.saveData, type: conn.type
@@ -834,7 +885,7 @@ reg('深度检测', 'Headless Chrome 深度检测', async () => {
   d.hasChromeRuntime = !!window.chrome?.runtime;
   d.hasChromeLoadTimes = !!window.chrome?.loadTimes;
   d.hasChromeCSI = !!window.chrome?.csi;
-  if (!window.chrome && /chrome/i.test(navigator.userAgent))
+  if (!window.chrome && /chrome/i.test(navigator.userAgent) && !_isSafari() && !_isIOS())
     issues.push('UA含Chrome但window.chrome不存在');
 
   // 3. Permissions API 异常 (Headless 下 notification 直接 denied)
@@ -972,7 +1023,7 @@ reg('深度检测', '字体指纹', async () => {
 
 reg('深度检测', '连接类型 vs UA 交叉验证', async () => {
   const conn = navigator.connection || navigator.mozConnection;
-  if (!conn) return report('连接类型 vs UA 交叉验证', 'warn', 'Network API 不可用', null);
+  if (!conn) return report('连接类型 vs UA 交叉验证', _isSafari() || _isIOS() ? 'pass' : 'warn', _isSafari() || _isIOS() ? 'Safari 不支持 (正常)' : 'Network API 不可用', null);
   const ua = navigator.userAgent;
   const d = { type: conn.type, effectiveType: conn.effectiveType, ua: ua.substring(0, 60) };
   const issues = [];
