@@ -815,21 +815,22 @@ function computeFinalVerdict(results, deviceProfile) {
     const mm = results['matchMedia 特征']?.detail;
     if (mm && mm['hover'] && mm['pointer-fine'] && !mm['pointer-coarse']) mobileAnomalies++;
     if (results['平台 API 三信号']?.status === 'risk') mobileAnomalies++;
-    if (results['navigator.plugins']?.status === 'risk') mobileAnomalies++;
+    // navigator.plugins 是弱信号, 不单独计入移动端组合异常
     if (results['纹理压缩扩展']?.status === 'risk') mobileAnomalies++;
     if (results['touchSupport 三元组']?.status === 'risk') mobileAnomalies++;
     if (results['userAgentData.mobile']?.status === 'risk') mobileAnomalies++;
     if (results['screenFrame 边框']?.status === 'risk') mobileAnomalies++;
   }
 
-  // === iOS 伪装异常 ===
+  // === iOS 伪装异常 (只看强矛盾, 不看 iOS 正常缺失的能力) ===
   let iosAnomalies = 0;
   if (profileType === 'iPhone' || /iphone|ipad/i.test(navigator.userAgent)) {
     if (!deviceProfile?.signals?.isAppleGPU && deviceProfile?.signals?.gpu) iosAnomalies++;
-    if (!!window.chrome) iosAnomalies++;
+    if (!!window.chrome && !/CriOS|FxiOS|EdgiOS/i.test(navigator.userAgent)) iosAnomalies++;
     const mm = results['matchMedia 特征']?.detail;
     if (mm && mm['hover'] && mm['pointer-fine'] && !mm['pointer-coarse']) iosAnomalies++;
-    if (results['DeviceMotion']?.status === 'risk') iosAnomalies++;
+    if (results['touchSupport 三元组']?.status === 'risk') iosAnomalies++;
+    if (results['userAgentData.mobile']?.status === 'risk') iosAnomalies++;
   }
 
   // === 综合 score 上限 ===
@@ -842,6 +843,13 @@ function computeFinalVerdict(results, deviceProfile) {
   else if (mobileAnomalies >= 3) finalScore = Math.min(finalScore, 49);
   if (iosAnomalies >= 2) finalScore = Math.min(finalScore, 49);
   else if (iosAnomalies >= 1 && !deviceProfile?.signals?.isAppleGPU && deviceProfile?.signals?.gpu) finalScore = Math.min(finalScore, 49);
+  // 自动化信号聚合压分 (stealth headless)
+  const highAutoCount = (hd?.critical?.length || 0) + (hd?.high?.length || 0);
+  const medAutoCount = hd?.medium?.length || 0;
+  if (highAutoCount >= 4) finalScore = Math.min(finalScore, 15);
+  else if (highAutoCount >= 3) finalScore = Math.min(finalScore, 30);
+  else if (highAutoCount >= 2) finalScore = Math.min(finalScore, 49);
+  else if (highAutoCount >= 1 && medAutoCount >= 2) finalScore = Math.min(finalScore, 49);
   if (riskC >= 5) finalScore = Math.min(finalScore, 49);
   else if (riskC >= 3) finalScore = Math.min(finalScore, 79);
 
@@ -1115,9 +1123,24 @@ document.getElementById('themeBtn').addEventListener('click', () => {
 try { setTheme(localStorage.getItem('h5ac-theme') || 'dark'); } catch(e) { setTheme('dark'); }
 
 // ─── Export ───
+function getRunMode(){
+  if(location.protocol==='file:') return 'file';
+  if(location.hostname==='localhost'||location.hostname==='127.0.0.1') return 'local-http';
+  if(location.protocol==='https:') return 'https';
+  return location.protocol.replace(':','')||'unknown';
+}
+function getLimitedChecks(){
+  const l=[];
+  if(location.protocol==='file:') l.push('CSP header fetch','Service Worker','部分网络请求/CORS');
+  if(!window.isSecureContext) l.push('Geolocation/传感器安全上下文');
+  return l;
+}
 function exportJSON() {
-  const d = { timestamp: new Date().toISOString(), userAgent: navigator.userAgent,
-    deviceProfile, verdict: lastVerdict, results };
+  const verdict=done>=checks.length?computeFinalVerdict(results,deviceProfile):lastVerdict;
+  const d = { timestamp: new Date().toISOString(), runMode: getRunMode(),
+    secureContext: !!window.isSecureContext, complete: done>=checks.length,
+    done, total: checks.length, limitedChecks: getLimitedChecks(),
+    userAgent: navigator.userAgent, deviceProfile, verdict, results };
   const b = new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(b);
   a.download = 'anticheat-' + Date.now() + '.json'; a.click();
@@ -1360,10 +1383,12 @@ reg('环境验证','平台 API 三信号',async()=>{
   if(!d.hasSinkId) mobileSignals++;
   d.mobileSignals=mobileSignals;
   d.claimedMobile=isMobile()||isAndroid();
-  if(d.claimedMobile&&mobileSignals<=0)
-    report('平台 API 三信号','risk',`声称移动端但0/3移动信号 (桌面环境)`,d);
-  else if(d.claimedMobile&&mobileSignals===1)
-    report('平台 API 三信号','risk',`仅1/3移动信号 (可疑)`,d);
+  if(isIOS())
+    report('平台 API 三信号','info',`${mobileSignals}/3 移动信号 (iOS 仅采集, 不判风险)`,d);
+  else if(isAndroid()&&mobileSignals<=0)
+    report('平台 API 三信号','risk','Android 0/3移动信号 (桌面伪装)',d);
+  else if(isAndroid()&&mobileSignals===1)
+    report('平台 API 三信号','risk','Android 仅1/3移动信号 (可疑)',d);
   else if(!d.claimedMobile&&mobileSignals>=3)
     report('平台 API 三信号','info',`桌面端有3/3移动信号`,d);
   else report('平台 API 三信号','pass',`${mobileSignals}/3 移动信号`,d);
@@ -1373,8 +1398,10 @@ reg('环境验证','navigator.plugins',async()=>{
   const plugins=navigator.plugins;
   const list=[];for(let i=0;i<plugins.length;i++)list.push(plugins[i].name);
   const d={count:list.length,list};
-  if((isMobile()||isAndroid())&&list.length>0)
-    report('navigator.plugins','risk',`移动端有${list.length}个插件: ${list.join(',')} (桌面伪装)`,d);
+  if(isIOS())
+    report('navigator.plugins','info',`iOS plugins=${list.length} (兼容暴露, 非风险)`,d);
+  else if(isAndroid()&&list.length>0)
+    report('navigator.plugins','info',`Android plugins=${list.length} (弱异常, 仅辅助)`,d);
   else if(isPC()&&list.length===0)
     report('navigator.plugins','info','桌面端无插件',d);
   else report('navigator.plugins','pass',`${list.length}个插件`,d);
@@ -1541,7 +1568,7 @@ reg('网络与位置','数据中心 IP',async()=>{
     const ctrl=new AbortController();const t=setTimeout(()=>ctrl.abort(),5000);
     const r=await fetch('https://ipapi.co/json/',{signal:ctrl.signal});clearTimeout(t);
     const info=await r.json();
-    const d={ip:info.ip,city:info.city,country:info.country_name,org:info.org,asn:info.asn};
+    const d={ip:info.ip,city:info.city,country:info.country_name,org:info.org,asn:info.asn,latitude:info.latitude,longitude:info.longitude};
     const dcKw=['amazon','aws','google cloud','microsoft','azure','alibaba','tencent','digitalocean',
       'linode','vultr','hetzner','ovh','oracle cloud','hosting','datacenter','data center','vps','cloud'];
     const isDC=dcKw.some(k=>(info.org||'').toLowerCase().includes(k));
@@ -1589,21 +1616,39 @@ reg('工具检测','自动化框架',async()=>{
 });
 
 reg('工具检测','Headless 深度检测',async()=>{
-  const d={},issues=[],critical=[];
-  if(/HeadlessChrome/i.test(navigator.userAgent)) critical.push('UA含HeadlessChrome');
-  if(navigator.webdriver) critical.push('navigator.webdriver=true');
-  if(!window.chrome&&isChromeBrowser()) issues.push('无window.chrome');
-  if(/Chrome\/\d+/i.test(navigator.userAgent)&&navigator.plugins.length===0&&!isMobile()) issues.push('Chrome UA但plugins为空');
+  const d={critical:[],high:[],medium:[]};
+  const ua=navigator.userAgent;
+  const isChrome=/Chrome\/\d+/i.test(ua);
+  const isDesktopChrome=isChrome&&!isMobile();
+  // critical 信号
+  if(/HeadlessChrome/i.test(ua)) d.critical.push('UA含HeadlessChrome');
+  if(navigator.webdriver) d.critical.push('navigator.webdriver=true');
   try{const np=await navigator.permissions.query({name:'notifications'});d.notifPerm=np.state;
-    if(np.state==='denied'&&Notification.permission==='default') critical.push('Permissions矛盾')}catch(e){}
-  if(navigator.connection?.rtt===0) issues.push('rtt=0');
-  if(window.outerWidth===0&&window.outerHeight===0) issues.push('outer=0');
-  if(!navigator.languages||navigator.languages.length===0) issues.push('languages为空');
-  d.critical=critical;d.issues=issues;
-  const all=critical.concat(issues);
-  if(critical.length) report('Headless 深度检测','risk',critical.concat(issues).join('; '),d);
-  else if(issues.length>=2) report('Headless 深度检测','risk',issues.join('; '),d);
-  else if(issues.length) report('Headless 深度检测','info',issues[0],d);
+    if(np.state==='denied'&&Notification.permission==='default') d.critical.push('Permissions矛盾')}catch(e){}
+  // high 信号
+  if(isDesktopChrome&&navigator.plugins.length===0) d.high.push('桌面Chrome plugins为空');
+  if(!navigator.languages||navigator.languages.length===0) d.high.push('languages为空');
+  if(window.outerWidth===0&&window.outerHeight===0) d.high.push('outer尺寸为0');
+  // CDP 序列化副作用检测
+  try{
+    let cdpHit=false;
+    const err=new Error('cdp-probe');
+    Object.defineProperty(err,'stack',{get(){cdpHit=true;return 'stack'}});
+    try{console.debug(err)}catch(e){}
+    await new Promise(r=>setTimeout(r,0));
+    if(cdpHit) d.high.push('CDP序列化副作用');
+    d.cdpHit=cdpHit;
+  }catch(e){}
+  const gpu=deviceProfile?.signals?.gpu||'';
+  if(/swiftshader|llvmpipe|software|basic render|microsoft basic|warp/i.test(gpu)) d.high.push('软件/Basic GPU');
+  // medium 信号
+  if(isDesktopChrome&&screen.width===800&&screen.height===600) d.medium.push('默认800x600窗口');
+  if(navigator.connection?.rtt===0) d.medium.push('rtt=0');
+  if(!window.chrome&&isChrome) d.medium.push('Chrome UA但无window.chrome');
+  const all=d.critical.concat(d.high,d.medium);
+  if(d.critical.length||d.high.length>=2) report('Headless 深度检测','risk',all.join('; '),d);
+  else if(d.high.length===1||d.medium.length>=2) report('Headless 深度检测','info',all.join('; '),d);
+  else if(all.length) report('Headless 深度检测','info',all[0],d);
   else report('Headless 深度检测','pass','正常',d);
 });
 
@@ -1951,7 +1996,8 @@ reg('深度指纹','屏幕物理尺寸',async()=>{
 reg('深度指纹','Vibration API',async()=>{
   const d={};
   if(!navigator.vibrate) {
-    if(isMobile()) report('Vibration API','risk','移动端无振动 API',d);
+    if(isIOS()) report('Vibration API','info','iOS/WebKit 不支持 Vibration API (正常)',d);
+    else if(isAndroid()) report('Vibration API','risk','Android 无振动 API (模拟器特征)',d);
     else report('Vibration API','pass','桌面端无需振动',d);
     return;
   }
@@ -2066,20 +2112,13 @@ reg('综合判定','IP/GPS 一致性',async()=>{
     if(!geoResult?.lat) missing.push('GPS');
     return report('IP/GPS 一致性','info',`${missing.join('+')}不可用, 无法交叉验证`,d);
   }
-  // ipapi.co 返回的坐标在 info.latitude/longitude, 但我们存的是 city/country
-  // 需要额外请求带坐标的数据, 或者用已有结果
-  // ipapi.co/json/ 返回 latitude/longitude 字段
-  let ipLat,ipLng;
-  try{
-    const ctrl=new AbortController();const t=setTimeout(()=>ctrl.abort(),5000);
-    const r=await fetch('https://ipapi.co/json/',{signal:ctrl.signal});clearTimeout(t);
-    const info=await r.json();
-    ipLat=info.latitude;ipLng=info.longitude;
-    d.ipLat=ipLat;d.ipLng=ipLng;d.ipCity=info.city;d.ipCountry=info.country_name;
-  }catch(e){
-    return report('IP/GPS 一致性','info','IP坐标获取失败',{error:e.message});
-  }
-  d.gpsLat=geoResult.lat;d.gpsLng=geoResult.lng;
+  // 复用数据中心IP检测已保存的经纬度, 不重复请求
+  const ipLat=Number(ipResult.latitude);
+  const ipLng=Number(ipResult.longitude);
+  if(!Number.isFinite(ipLat)||!Number.isFinite(ipLng))
+    return report('IP/GPS 一致性','info','IP坐标不可用',d);
+  d.ipLat=ipLat;d.ipLng=ipLng;d.gpsLat=geoResult.lat;d.gpsLng=geoResult.lng;
+  d.gpsAcc=geoResult.acc;
   // Haversine 公式算两点距离 (km)
   const R=6371;
   const dLat=(geoResult.lat-ipLat)*Math.PI/180;
@@ -2087,9 +2126,17 @@ reg('综合判定','IP/GPS 一致性',async()=>{
   const a=Math.sin(dLat/2)**2+Math.cos(ipLat*Math.PI/180)*Math.cos(geoResult.lat*Math.PI/180)*Math.sin(dLng/2)**2;
   const dist=R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
   d.distanceKm=Math.round(dist);
-  if(dist>500) report('IP/GPS 一致性','risk',`IP与GPS距离${Math.round(dist)}km (VPN/代理?)`,d);
-  else if(dist>200) report('IP/GPS 一致性','info',`IP与GPS距离${Math.round(dist)}km (偏差较大)`,d);
-  else report('IP/GPS 一致性','pass',`IP与GPS距离${Math.round(dist)}km`,d);
+  // 组合辅助判定: 单点距离不直接判risk, 需结合其他网络信号
+  const hasDcIp=results['数据中心 IP']?.status==='risk';
+  const hasProxy=results['Proxy/VPN']?.status==='risk';
+  const acc=geoResult.acc||Infinity;
+  if(dist>2000&&acc<200&&(hasDcIp||hasProxy))
+    report('IP/GPS 一致性','risk',`距离${Math.round(dist)}km + 数据中心/代理信号 (高风险)`,d);
+  else if(dist>500)
+    report('IP/GPS 一致性','info',`距离${Math.round(dist)}km (可能为VPN/运营商出口/IP库偏差)`,d);
+  else if(dist>200)
+    report('IP/GPS 一致性','info',`距离${Math.round(dist)}km (偏差较大)`,d);
+  else report('IP/GPS 一致性','pass',`距离${Math.round(dist)}km`,d);
 });
 
 // ==================== 启动 ====================
