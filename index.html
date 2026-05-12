@@ -813,7 +813,6 @@ function computeFinalVerdict(results, deviceProfile) {
   // === 三层风险分类 ===
   const fatalRisks = [];
   const criticalRisks = [];
-  const seatBlockers = [];
   const hd = results['Headless 深度检测']?.detail;
 
   // Fatal: Hook/注入/工具 — 直接压分
@@ -829,26 +828,36 @@ function computeFinalVerdict(results, deviceProfile) {
   if (results['eval 锁定检测']?.status === 'risk') criticalRisks.push('eval被篡改');
   if (results['端口扫描 (WPK)']?.detail?.open?.includes(9222)) criticalRisks.push('CDP远程调试端口');
 
-  // Warnings: 用户可操作项 (GPS未开, IP/GPS不一致但VPN未确证)
+  // Warnings + NeedActions
   const warnings = [];
   const needActions = [];
+
+  // GPS: 按 reason 区分
   const geo = results['Geolocation'];
-  if (RISK_POLICY.gpsRequired && geo?.status === 'risk') {
-    if (geo?.detail?.code) {
+  if (RISK_POLICY.gpsRequired && geo) {
+    if (geo.detail?.reason === 'fake_coord') {
+      fatalRisks.push('GPS假坐标');
+    } else if (['permission_denied','unavailable','timeout','unsupported'].includes(geo.detail?.reason)) {
       warnings.push('请打开GPS/定位权限后重新检测');
       needActions.push('请打开GPS后重新检测');
-    } else {
-      fatalRisks.push('GPS假坐标');
     }
   }
-  if (results['IP/GPS 一致性']?.status === 'risk') {
+
+  // IP/GPS: risk 和 info 都要接住
+  const ipGps = results['IP/GPS 一致性'];
+  if (ipGps?.status === 'risk') {
     if (results['Proxy/VPN']?.status === 'risk' || results['数据中心 IP']?.status === 'risk') {
       criticalRisks.push('IP/GPS不一致+VPN/数据中心证据');
     } else {
       warnings.push('IP/GPS不一致, 请确认是否开启VPN/代理');
       needActions.push('请关闭VPN/代理后重新检测');
     }
+  } else if (ipGps?.status === 'info' && /VPN|代理|网络出口|IP国家|距离/.test(ipGps.summary || '')) {
+    warnings.push('IP/GPS不一致, 请确认是否开启VPN/代理');
+    needActions.push('请关闭VPN/代理或切换网络后重新检测');
   }
+
+  // Proxy/VPN 单独命中
   if (results['Proxy/VPN']?.status === 'risk' && !criticalRisks.includes('IP/GPS不一致+VPN/数据中心证据')) {
     warnings.push('疑似VPN/代理');
   }
@@ -957,10 +966,13 @@ function computeFinalVerdict(results, deviceProfile) {
     policy: RISK_POLICY, runMode: location.protocol };
 }
 
-function getVerdictTone(finalScore, verdict, criticalRisks, mobileAnomalies) {
+function getVerdictTone(finalScore, verdict, criticalRisks, mobileAnomalies, seatStatus) {
+  if (seatStatus === 'block') return 'risk';
+  if (seatStatus === 'allow') return 'safe';
+  if (seatStatus === 'warning' || seatStatus === 'action_required' || seatStatus === 'review') return 'warn';
   if (criticalRisks && criticalRisks.length > 0) return 'risk';
   if (mobileAnomalies && mobileAnomalies >= 3) return 'risk';
-  if (finalScore >= 80 && verdict === '设备安全') return 'safe';
+  if (finalScore >= 80) return 'safe';
   if (finalScore >= 50) return 'warn';
   return 'risk';
 }
@@ -992,7 +1004,7 @@ function updateScore() {
     document.body.classList.add('scan-done');
     lastVerdict = computeFinalVerdict(results, deviceProfile);
     const fs = lastVerdict.finalScore;
-    const tone = getVerdictTone(fs, lastVerdict.verdict, lastVerdict.criticalRisks, lastVerdict.mobileAnomalies);
+    const tone = getVerdictTone(fs, lastVerdict.verdict, lastVerdict.criticalRisks, lastVerdict.mobileAnomalies, lastVerdict.seatStatus);
 
     // 更新 ring
     const ring = document.getElementById('ring');
@@ -1092,7 +1104,7 @@ function renderProfile(p) {
 
   // Probability bars
   const probColors = {iOS:'#BF5AF2',Mac:'#5AC8FA',Windows:'#0A84FF',Android:'#30D158','模拟器':'#FF453A','云真机':'#FF9F0A'};
-  const probIcons = {iPhone:'🍎',Android:'📱',PC:'💻','模拟器':'⚠️','云真机':'☁️'};
+  const probIcons = {iOS:'🍎',Mac:'💻',Windows:'🖥️',Android:'🤖','模拟器':'⚠️','云真机':'☁️'};
   const probsEl = document.getElementById('probs');
   probsEl.innerHTML = Object.entries(p.scores)
     .filter(([,v]) => v > 0)
@@ -1626,15 +1638,14 @@ reg('网络与位置','Geolocation',async()=>{
   const geoErr={1:'用户拒绝定位',2:'定位不可用',3:'定位超时'};
   return new Promise(rv=>{
     if(!navigator.geolocation){
-      report('Geolocation',RISK_POLICY.gpsRequired?'risk':'info',
-        RISK_POLICY.gpsRequired?'不支持定位, WPK地理验证无法完成':'不可用',{});rv();return}
+      report('Geolocation','info','不支持定位, 请使用支持定位的浏览器',{reason:'unsupported'});rv();return}
     navigator.geolocation.getCurrentPosition(
       p=>{const d={lat:p.coords.latitude,lng:p.coords.longitude,acc:p.coords.accuracy};
-        if((d.lat===0&&d.lng===0)||(d.lat===1&&d.lng===1)) report('Geolocation','risk',`假坐标(${d.lat},${d.lng})`,d);
+        if((d.lat===0&&d.lng===0)||(d.lat===1&&d.lng===1))
+          report('Geolocation','risk',`假坐标(${d.lat},${d.lng})`,{...d,reason:'fake_coord'});
         else report('Geolocation','pass',`(${d.lat.toFixed(4)},${d.lng.toFixed(4)}) ±${Math.round(d.acc)}m`,d);rv()},
-      e=>{const msg=geoErr[e.code]||'定位失败';
-        report('Geolocation',RISK_POLICY.gpsRequired?'risk':'info',
-          RISK_POLICY.gpsRequired?`${msg}, WPK入座地理验证无法完成`:msg,{code:e.code});rv()},
+      e=>{const msg=geoErr[e.code]||'定位失败';const reason=e.code===1?'permission_denied':e.code===2?'unavailable':'timeout';
+        report('Geolocation','info',`${msg}, 请打开GPS后重新检测`,{code:e.code,reason});rv()},
       {enableHighAccuracy:true,timeout:10000,maximumAge:0}
     );
   });
@@ -1993,15 +2004,19 @@ reg('v8 新增','CSP 安全策略',async()=>{
 });
 
 reg('v8 新增','注入脚本检测',async()=>{
+  const ALLOWED_HOSTS=[location.host,'h5.wpk.com','h5.wpk55.net','h5.wpk11.net'];
+  const isAllowed=src=>{try{return ALLOWED_HOSTS.includes(new URL(src,location.href).host)}catch(e){return false}};
   const scripts=document.querySelectorAll('script');
-  const d={total:scripts.length,inline:0,external:0,list:[]};
+  const d={total:scripts.length,inline:0,external:0,unknownExternal:0,list:[]};
   scripts.forEach(s=>{
-    if(s.src){d.external++;d.list.push(s.src.substring(0,80))}
-    else{d.inline++;d.list.push('(inline '+s.textContent.length+' chars)')}
+    if(s.src){d.external++;const ok=isAllowed(s.src);if(!ok)d.unknownExternal++;
+      d.list.push({src:s.src.substring(0,120),allowed:ok})}
+    else{d.inline++;d.list.push({inline:s.textContent.length})}
   });
-  if(d.external>0) report('注入脚本检测','risk',`检测到 ${d.external} 个外部脚本`,d);
+  if(d.unknownExternal>0) report('注入脚本检测','risk',`检测到 ${d.unknownExternal} 个未知外部脚本`,d);
+  else if(d.external>0) report('注入脚本检测','info',`${d.external} 个白名单外部脚本`,d);
   else if(d.inline>2) report('注入脚本检测','info',`${d.inline} 个内联脚本`,d);
-  else report('注入脚本检测','pass',`${d.total} 个脚本 (${d.inline} 内联)`,d);
+  else report('注入脚本检测','pass',`${d.total} 个脚本`,d);
 });
 
 reg('v8 新增','XHR/WS 拦截检测',async()=>{
