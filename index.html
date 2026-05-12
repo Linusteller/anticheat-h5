@@ -1,112 +1,766 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Anti-Cheat Detector v2</title>
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#0a0e17;--card:#131a2b;--card2:#1a2340;--green:#00e676;--red:#ff5252;--yellow:#ffd740;--blue:#448aff;--cyan:#18ffff;--text:#e0e0e0;--text2:#8892a4;--border:#1e2a42}
-body{font-family:-apple-system,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:16px;max-width:640px;margin:0 auto}
-.hd{text-align:center;padding:20px 0 12px}.hd h1{font-size:20px;font-weight:700;letter-spacing:1px}.hd p{color:var(--text2);font-size:12px;margin-top:4px}
+:root {
+  --accent: #5E5CE6;
+  --red:#FF453A; --orange:#FF9F0A; --green:#30D158; --blue:#0A84FF; --info:#64D2FF;
+}
+[data-theme="dark"]{
+  --bg-0:#000; --bg-1:#0a0a0f; --bg-2:#1c1c1e;
+  --txt-1:#fff; --txt-2:rgba(235,235,245,0.78); --txt-3:rgba(235,235,245,0.50); --txt-4:rgba(235,235,245,0.30);
+  --sep:rgba(84,84,88,0.45);
+  --glass-bg:rgba(28,28,30,0.68);
+  --glass-stroke:rgba(255,255,255,0.08);
+  --glass-shine:rgba(255,255,255,0.06);
+  --tint-red:rgba(255,69,58,0.18); --tint-orange:rgba(255,159,10,0.16);
+  --tint-green:rgba(48,209,88,0.16); --tint-blue:rgba(10,132,255,0.16);
+  --tint-info:rgba(100,210,255,0.16); --tint-accent:rgba(94,92,230,0.20);
+  --ambient: radial-gradient(60% 40% at 50% 0%, rgba(94,92,230,0.30), transparent 70%),
+             radial-gradient(70% 50% at 20% 90%, rgba(255,69,58,0.22), transparent 70%),
+             radial-gradient(70% 50% at 100% 60%, rgba(10,132,255,0.18), transparent 70%);
+}
+[data-theme="light"]{
+  --bg-0:#F2F2F7; --bg-1:#fff; --bg-2:#fff;
+  --txt-1:#000; --txt-2:rgba(60,60,67,0.85); --txt-3:rgba(60,60,67,0.60); --txt-4:rgba(60,60,67,0.30);
+  --sep:rgba(60,60,67,0.18);
+  --glass-bg:rgba(255,255,255,0.74);
+  --glass-stroke:rgba(0,0,0,0.06);
+  --glass-shine:rgba(255,255,255,0.6);
+  --tint-red:rgba(255,59,48,0.10); --tint-orange:rgba(255,149,0,0.10);
+  --tint-green:rgba(52,199,89,0.10); --tint-blue:rgba(0,122,255,0.10);
+  --tint-info:rgba(90,200,250,0.12); --tint-accent:rgba(94,92,230,0.10);
+  --ambient: radial-gradient(60% 40% at 50% 0%, rgba(94,92,230,0.16), transparent 70%),
+             radial-gradient(70% 50% at 20% 90%, rgba(255,59,48,0.12), transparent 70%),
+             radial-gradient(70% 50% at 100% 60%, rgba(0,122,255,0.10), transparent 70%);
+}
 
-/* 设备画像卡 */
-.profile{background:linear-gradient(135deg,#1a2440,#0f1a2e);border:1px solid var(--border);border-radius:14px;padding:20px;margin:12px 0;text-align:center}
-.profile-icon{font-size:48px;margin-bottom:8px}
-.profile-type{font-size:18px;font-weight:700;margin:4px 0}
-.profile-conf{font-size:12px;color:var(--text2)}
-.profile-tags{display:flex;flex-wrap:wrap;justify-content:center;gap:6px;margin-top:10px}
-.tag{font-size:11px;padding:3px 10px;border-radius:12px;background:rgba(68,138,255,0.15);color:var(--blue)}
-.tag.ok{background:rgba(0,230,118,0.1);color:var(--green)}.tag.bad{background:rgba(255,82,82,0.1);color:var(--red)}.tag.mid{background:rgba(255,215,64,0.1);color:var(--yellow)}
+* { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html, body { margin:0; padding:0; }
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;
+  background:var(--bg-0); color:var(--txt-1);
+  min-height:100vh; letter-spacing:-0.01em;
+}
+body::before{content:"";position:fixed;inset:0;background:var(--ambient);pointer-events:none;z-index:0;transition:background .4s ease;}
+.tabular{font-variant-numeric:tabular-nums;}
 
-/* 评分 */
-.score-wrap{display:flex;justify-content:center;align-items:center;margin:16px auto;position:relative;width:140px;height:140px}
-.score-wrap svg{transform:rotate(-90deg)}.bg-c{fill:none;stroke:var(--border);stroke-width:10}.fg-c{fill:none;stroke-width:10;stroke-linecap:round;transition:stroke-dashoffset 1s,stroke .5s}
-.score-v{position:absolute;font-size:38px;font-weight:800}.score-l{text-align:center;font-size:13px;color:var(--text2);margin-top:-2px}
-.stats{display:flex;justify-content:center;gap:20px;margin:12px 0}.stat{text-align:center}.sn{font-size:20px;font-weight:700}.sl{font-size:10px;color:var(--text2);margin-top:1px}
+/* ─── Dynamic Island ─── */
+.island-area{
+  position:sticky; top:0; z-index:30;
+  padding:14px 16px 12px;
+  display:flex; flex-direction:column; align-items:center;
+  background:linear-gradient(to bottom, var(--bg-0) 50%, transparent);
+}
+.island{
+  display:flex; align-items:center; gap:10px;
+  background:rgba(20,20,22,0.55);
+  color:#fff;
+  border-radius:999px;
+  padding:10px 18px 10px 14px;
+  height:44px; min-width:240px;
+  box-shadow:
+    inset 0 0.6px 0 rgba(255,255,255,0.14),
+    inset 0 -0.6px 0 rgba(0,0,0,0.45),
+    0 12px 36px rgba(0,0,0,0.55),
+    0 0 0 0.5px rgba(255,255,255,0.06);
+  position:relative; overflow:hidden;
+  cursor:pointer; user-select:none;
+  transition:all .4s cubic-bezier(.2,.8,.2,1);
+  backdrop-filter:blur(28px) saturate(200%);
+  -webkit-backdrop-filter:blur(28px) saturate(200%);
+}
+[data-theme="light"] .island{
+  background:rgba(20,20,22,0.85);
+  box-shadow:
+    inset 0 0.6px 0 rgba(255,255,255,0.14),
+    0 12px 36px rgba(0,0,0,0.28);
+}
+.island::before{
+  content:""; position:absolute; inset:0; border-radius:999px;
+  background:
+    radial-gradient(60% 100% at 30% 0%, rgba(255,255,255,0.10), transparent 60%),
+    linear-gradient(180deg, rgba(255,255,255,0.06), transparent 50%);
+  pointer-events:none;
+}
+.island::after{
+  content:""; position:absolute;
+  top:0; bottom:0; width:60%; left:-60%;
+  background:linear-gradient(110deg, transparent 30%, rgba(255,255,255,0.16) 50%, transparent 70%);
+  animation:shimmer 3.4s ease-in-out infinite;
+  pointer-events:none;
+  mix-blend-mode:overlay;
+}
+@keyframes shimmer{
+  0%, 25%{ transform:translateX(0); }
+  60%, 100%{ transform:translateX(260%); }
+}
+.island-dot{
+  width:10px; height:10px; border-radius:50%;
+  background:var(--orange); flex-shrink:0;
+  box-shadow:0 0 0 0 rgba(255,159,10,0.7);
+  animation:pulse 1.6s ease-out infinite;
+}
+@keyframes pulse{
+  0%{box-shadow:0 0 0 0 rgba(255,159,10,0.55);}
+  100%{box-shadow:0 0 0 10px rgba(255,159,10,0);}
+}
+.island-label{
+  font-size:13px; font-weight:600; letter-spacing:-0.08px;
+  color:rgba(255,255,255,0.9); flex:1;
+}
+.island-meta{
+  font-size:13px; font-weight:600;
+  color:#FF453A; font-variant-numeric:tabular-nums;
+  letter-spacing:-0.08px;
+}
+.theme-btn{
+  position:absolute; right:18px; top:18px; z-index:31;
+  width:36px; height:36px; border-radius:18px;
+  background:var(--glass-bg); border:0.5px solid var(--glass-stroke);
+  display:flex; align-items:center; justify-content:center;
+  color:var(--txt-1); cursor:pointer;
+  backdrop-filter:blur(20px) saturate(180%);
+  -webkit-backdrop-filter:blur(20px) saturate(180%);
+  box-shadow:inset 0 0.5px 0 var(--glass-shine);
+}
 
-/* 进度 */
-.prog{height:3px;background:var(--border);border-radius:2px;margin:8px 0;overflow:hidden}.prog-f{height:100%;background:var(--blue);border-radius:2px;transition:width .3s;width:0%}
+/* ─── Hero banner ─── */
+.hero{
+  position:relative; z-index:1;
+  margin:8px 16px 0;
+  border-radius:28px;
+  background:var(--glass-bg);
+  border:0.5px solid var(--glass-stroke);
+  box-shadow:
+    inset 0 0.5px 0 var(--glass-shine),
+    0 18px 50px rgba(0,0,0,0.30);
+  backdrop-filter:blur(40px) saturate(180%);
+  -webkit-backdrop-filter:blur(40px) saturate(180%);
+  overflow:hidden;
+}
+.hero::before{
+  content:""; position:absolute; inset:0;
+  background:radial-gradient(80% 100% at 100% 0%, rgba(255,69,58,0.22), transparent 70%);
+  pointer-events:none;
+}
+.hero-top{
+  position:relative; padding:18px 20px 14px;
+  display:flex; align-items:center; gap:16px;
+}
+.hero-icon{
+  width:56px; height:56px; border-radius:18px;
+  background:var(--tint-red);
+  display:flex; align-items:center; justify-content:center;
+  font-size:30px;
+  box-shadow:inset 0 0 0 0.5px rgba(255,69,58,0.35);
+}
+.hero-info{flex:1; min-width:0;}
+.hero-label{
+  font-size:11px; color:var(--txt-3); font-weight:600;
+  letter-spacing:1px; text-transform:uppercase;
+  margin-bottom:2px;
+}
+.hero-name{
+  font-size:24px; font-weight:700; letter-spacing:-0.5px;
+  display:flex; align-items:center; gap:8px;
+}
+.hero-conf{
+  display:inline-flex; align-items:baseline; gap:3px;
+  background:var(--tint-red);
+  color:var(--red);
+  padding:2px 8px; border-radius:6px;
+  border:0.5px solid rgba(255,69,58,0.30);
+  font-size:13px; font-weight:600;
+  font-variant-numeric:tabular-nums;
+}
+.hero-eval{
+  font-size:13px; color:var(--txt-2);
+  margin-top:4px; line-height:1.35;
+}
 
-/* 类别 */
-.cat{margin:16px 0 6px;padding:0 4px;display:flex;align-items:center;gap:8px}.cat-d{width:7px;height:7px;border-radius:50%;background:var(--blue)}.cat-n{font-size:13px;font-weight:600;color:var(--blue)}
+/* score widget inside hero */
+.hero-score{
+  position:relative;
+  padding:14px 20px 18px;
+  border-top:0.5px solid var(--sep);
+  display:flex; align-items:center; gap:16px;
+}
+.score-arc{
+  position:relative; flex-shrink:0;
+  width:88px; height:88px;
+}
+.score-arc b{
+  position:absolute; inset:0;
+  display:flex; align-items:center; justify-content:center;
+  font-size:30px; font-weight:700;
+  letter-spacing:-1.2px;
+  font-variant-numeric:tabular-nums;
+  color:var(--txt-1);
+}
+.score-side{flex:1; min-width:0;}
+.score-side .vt{
+  font-size:11px; color:var(--txt-3); font-weight:600;
+  letter-spacing:0.8px; text-transform:uppercase;
+  margin-bottom:3px;
+}
+.score-side .vv{
+  font-size:18px; font-weight:700; color:var(--red);
+  letter-spacing:-0.3px;
+  margin-bottom:6px;
+}
+.score-formula{
+  font-family:-apple-system,"SF Mono",ui-monospace,monospace;
+  font-size:11px; font-variant-numeric:tabular-nums;
+  background:rgba(120,120,128,0.18);
+  padding:7px 10px; border-radius:8px;
+  color:var(--txt-2);
+}
+.score-formula b{color:var(--txt-1); font-weight:600;}
 
-/* 卡片 */
-.cd{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;transition:background .2s;margin-bottom:6px}
-.cd:hover{background:var(--card2)}.cd-t{display:flex;justify-content:space-between;align-items:center}
-.cd-n{font-size:13px;font-weight:500}.cd-b{font-size:10px;padding:2px 8px;border-radius:12px;font-weight:600}
-.b-p{background:rgba(0,230,118,.12);color:var(--green)}.b-r{background:rgba(255,82,82,.12);color:var(--red)}
-.b-w{background:rgba(255,215,64,.12);color:var(--yellow)}.b-i{background:rgba(24,255,255,.12);color:var(--cyan)}
-.b-x{background:rgba(255,255,255,.06);color:var(--text2)}
-.cd-s{font-size:11px;color:var(--text2);margin-top:3px}.cd-d{font-size:11px;color:var(--text2);margin-top:6px;display:none;word-break:break-all;line-height:1.5;white-space:pre-wrap}
-.cd.open .cd-d{display:block}
+/* Stat strip */
+.stat-strip{
+  display:flex; padding:0;
+  border-top:0.5px solid var(--sep);
+}
+.stat-strip > div{
+  flex:1; padding:12px 14px;
+  display:flex; align-items:baseline; gap:6px;
+  border-right:0.5px solid var(--sep);
+}
+.stat-strip > div:last-child{border-right:none;}
+.stat-strip b{
+  font-size:20px; font-weight:700;
+  letter-spacing:-0.4px;
+  font-variant-numeric:tabular-nums;
+}
+.stat-strip small{
+  font-size:11px; color:var(--txt-3); letter-spacing:-0.08px;
+}
 
-.acts{display:flex;gap:8px;margin:20px 0;justify-content:center}
-.btn{padding:8px 20px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:12px;cursor:pointer}
-.btn:hover{background:var(--card2)}.btn-p{background:var(--blue);border-color:var(--blue);color:#fff}
+/* probs row */
+.prob-row{
+  display:flex; gap:6px;
+  padding:12px 18px 16px;
+  border-top:0.5px solid var(--sep);
+}
+.prob-pill{
+  flex:1; min-width:0;
+  display:flex; flex-direction:column;
+  background:rgba(120,120,128,0.14);
+  border-radius:10px;
+  padding:8px 8px 6px;
+  text-align:center;
+  gap:4px;
+}
+.prob-pill .pn{
+  font-size:9px; color:var(--txt-3); letter-spacing:0.5px;
+  text-transform:uppercase;
+}
+.prob-pill .pv{
+  font-size:14px; font-weight:700;
+  font-variant-numeric:tabular-nums;
+  letter-spacing:-0.3px;
+  color:var(--pc);
+}
+.prob-pill .pb{
+  height:3px; border-radius:2px;
+  background:rgba(255,255,255,0.06);
+  overflow:hidden;
+}
+.prob-pill .pb > i{
+  display:block; height:100%;
+  background:var(--pc); box-shadow:0 0 6px var(--pc);
+}
+
+/* hard evidence chip */
+.ev-row{
+  display:none; gap:8px; align-items:center;
+  margin:14px 16px 4px;
+  padding:10px 12px;
+  background:var(--tint-red);
+  border:0.5px solid rgba(255,69,58,0.35);
+  border-radius:14px;
+  position:relative; z-index:1;
+}
+.ev-row.show{display:flex;}
+.ev-row svg{flex-shrink:0; color:var(--red);}
+.ev-row .ev-t{
+  font-size:11px; font-weight:700;
+  text-transform:uppercase; letter-spacing:0.5px;
+  color:var(--red);
+  margin-right:6px;
+}
+.ev-row .ev-c{
+  flex:1; font-size:13px; color:var(--txt-1);
+  font-weight:500;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+
+/* ─── Activity timeline ─── */
+.section{
+  position:relative; z-index:1;
+  margin-top:24px; padding:0 16px;
+}
+.section-h{
+  display:flex; align-items:baseline;
+  margin:0 4px 12px;
+}
+.section-h h2{
+  font-size:22px; font-weight:700; letter-spacing:-0.45px;
+  margin:0; flex:1;
+}
+.section-h span{
+  font-size:13px; color:var(--txt-3); font-variant-numeric:tabular-nums;
+}
+
+.tl{position:relative;}
+.tl::before{
+  content:""; position:absolute;
+  left:18px; top:8px; bottom:8px; width:2px;
+  background:linear-gradient(to bottom, var(--sep) 0%, var(--sep) 50%, transparent);
+  border-radius:1px;
+}
+
+.cat{
+  position:relative;
+  margin-bottom:6px;
+  padding-left:42px;
+}
+.cat-head{
+  display:flex; align-items:center; gap:10px;
+  padding:6px 0 8px;
+  cursor:pointer; user-select:none;
+}
+.cat-head .marker{
+  position:absolute; left:8px;
+  width:22px; height:22px; border-radius:11px;
+  background:var(--bg-1);
+  border:0.5px solid var(--glass-stroke);
+  display:flex; align-items:center; justify-content:center;
+  font-size:11px; font-weight:700;
+  color:var(--txt-2); font-variant-numeric:tabular-nums;
+  z-index:2;
+}
+.cat-name{
+  font-size:15px; font-weight:600; letter-spacing:-0.2px;
+  flex:1;
+}
+.cat-counts{
+  display:flex; gap:4px;
+  font-size:10px; font-weight:700;
+  font-variant-numeric:tabular-nums;
+}
+.cat-counts span{
+  padding:2px 6px; border-radius:5px;
+  background:var(--cbg); color:var(--cfg);
+  letter-spacing:0;
+}
+.cat-chev{
+  color:var(--txt-4);
+  transition:transform .25s ease;
+}
+.cat.open .cat-chev{transform:rotate(90deg);}
+
+.cat-body{
+  max-height:0; overflow:hidden;
+  transition:max-height .35s ease;
+}
+.cat.open .cat-body{max-height:2800px;}
+
+.item{
+  display:grid;
+  grid-template-columns: 1fr auto;
+  column-gap:10px;
+  padding:10px 12px;
+  background:var(--glass-bg);
+  border:0.5px solid var(--glass-stroke);
+  backdrop-filter:blur(20px) saturate(180%);
+  -webkit-backdrop-filter:blur(20px) saturate(180%);
+  border-radius:14px;
+  margin-bottom:6px;
+  cursor:pointer;
+  position:relative; overflow:hidden;
+  box-shadow:inset 0 0.5px 0 var(--glass-shine);
+}
+.item::before{
+  content:""; position:absolute;
+  left:0; top:10%; bottom:10%; width:3px;
+  background:var(--accent-c);
+  border-radius:3px;
+}
+.item:active{transform:scale(0.99);}
+.item-head{
+  display:flex; align-items:center; gap:8px;
+  min-width:0;
+}
+.item-name{
+  font-size:14px; font-weight:500;
+  letter-spacing:-0.16px;
+  color:var(--txt-1);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  flex:1; min-width:0;
+}
+.item-sum{
+  grid-column:1; font-size:11px;
+  color:var(--txt-3); font-variant-numeric:tabular-nums;
+  margin-top:3px; line-height:1.35;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.item-time{
+  grid-row:1/3; grid-column:2;
+  align-self:start;
+  font-size:10px; color:var(--txt-4); font-variant-numeric:tabular-nums;
+  letter-spacing:0;
+}
+.item-badge{
+  width:6px; height:6px; border-radius:50%;
+  background:var(--accent-c);
+  box-shadow:0 0 8px var(--accent-c);
+  flex-shrink:0;
+}
+[data-st="pass"]{--accent-c:var(--green); --cbg:var(--tint-green); --cfg:var(--green);}
+[data-st="risk"]{--accent-c:var(--red);   --cbg:var(--tint-red);   --cfg:var(--red);}
+[data-st="info"]{--accent-c:var(--info);  --cbg:var(--tint-info);  --cfg:var(--info);}
+[data-st="wait"]{--accent-c:var(--txt-4); --cbg:rgba(120,120,128,0.12); --cfg:var(--txt-3);}
+[data-ct="pass"]{--cbg:var(--tint-green); --cfg:var(--green);}
+[data-ct="risk"]{--cbg:var(--tint-red);   --cfg:var(--red);}
+[data-ct="info"]{--cbg:var(--tint-info);  --cfg:var(--info);}
+
+/* ─── Floating dock ─── */
+.dock{
+  position:fixed; left:16px; right:16px; bottom:18px; z-index:40;
+  display:flex; gap:8px;
+  padding:6px;
+  background:var(--glass-bg);
+  border-radius:18px;
+  border:0.5px solid var(--glass-stroke);
+  backdrop-filter:blur(28px) saturate(180%);
+  -webkit-backdrop-filter:blur(28px) saturate(180%);
+  box-shadow:
+    inset 0 0.6px 0 var(--glass-shine),
+    0 16px 40px rgba(0,0,0,0.30);
+}
+.dock button{
+  flex:1; height:44px;
+  border-radius:14px;
+  display:inline-flex; align-items:center; justify-content:center; gap:8px;
+  border:none;
+  font:600 14px/1 -apple-system,system-ui,"PingFang SC",sans-serif;
+  letter-spacing:-0.2px;
+  color:var(--txt-1);
+  background:rgba(120,120,128,0.16);
+  cursor:pointer;
+}
+.dock button:active{transform:scale(0.98);}
+.dock button.primary{
+  background:var(--accent);
+  color:#fff;
+  box-shadow:0 6px 18px rgba(94,92,230,0.45), inset 0 0.5px 0 rgba(255,255,255,0.25);
+}
+
+/* ─── Sheet ─── */
+.sheet-bg{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,0.5);opacity:0;pointer-events:none;transition:opacity .25s;backdrop-filter:blur(2px);}
+.sheet-bg.show{opacity:1;pointer-events:auto;}
+.sheet{
+  position:fixed; left:0; right:0; bottom:0; z-index:101;
+  background:var(--bg-1);
+  border-radius:22px 22px 0 0;
+  padding:8px 0 32px;
+  transform:translateY(100%);
+  transition:transform .35s cubic-bezier(.2,.8,.2,1);
+  max-height:78vh;
+  display:flex; flex-direction:column;
+  box-shadow:0 -20px 60px rgba(0,0,0,0.4);
+  border:0.5px solid var(--glass-stroke);
+}
+.sheet.show{transform:translateY(0);}
+.grabber{width:36px;height:5px;border-radius:3px;background:var(--txt-4);margin:6px auto 14px;}
+.sheet-head{padding:0 20px 14px; border-bottom:0.5px solid var(--sep);}
+.sheet-name{font-size:20px;font-weight:700;letter-spacing:-0.4px;}
+.sheet-meta{margin-top:6px;display:flex;gap:8px;align-items:center;font-size:12px;color:var(--txt-3);}
+.sheet-body{overflow:auto;padding:14px 20px;font-family:-apple-system,"SF Mono",ui-monospace,monospace;font-size:12px;line-height:1.6;color:var(--txt-2);font-variant-numeric:tabular-nums;}
+.sheet-body pre{margin:0;white-space:pre-wrap;word-break:break-all;}
+.k{color:var(--info);} .s{color:var(--green);} .n{color:var(--orange);} .b{color:var(--accent);}
+.sheet-badge{font-size:10px;font-weight:700;letter-spacing:0.4px;padding:3px 7px;border-radius:6px;text-transform:uppercase;background:var(--cbg);color:var(--cfg);}
+
+main{padding-bottom:120px;}
+
+/* ─── Liquid Glass enhancements ─── */
+.hero::after{
+  content:""; position:absolute; inset:-40% -20%;
+  background:
+    radial-gradient(40% 22% at 20% 30%, rgba(255,255,255,0.12), transparent 70%),
+    radial-gradient(30% 18% at 80% 60%, rgba(94,92,230,0.10), transparent 70%);
+  filter:blur(20px);
+  animation:drift 14s ease-in-out infinite alternate;
+  pointer-events:none; mix-blend-mode:screen;
+}
+@keyframes drift{
+  0%  { transform:translate(0,0) rotate(0deg); }
+  100%{ transform:translate(4%, -3%) rotate(8deg); }
+}
+
+#ring{
+  animation:ringPulse 3.6s ease-in-out 1.6s infinite;
+}
+@keyframes ringPulse{
+  0%,100%{ filter:drop-shadow(0 0 6px rgba(255,69,58,0.50)); }
+  50%    { filter:drop-shadow(0 0 12px rgba(255,69,58,0.85)); }
+}
+
+.prob-pill .pb > i{
+  width:0 !important;
+  animation:probFill 1.1s cubic-bezier(.2,.7,.3,1) .55s forwards;
+}
+@keyframes probFill{ to{ width:var(--pw,0%) !important; } }
+
+.ev-row{ overflow:hidden; }
+.ev-row::after{
+  content:""; position:absolute; inset:0;
+  background:linear-gradient(100deg, transparent 35%, rgba(255,255,255,0.22) 50%, transparent 65%);
+  transform:translateX(-100%);
+  animation:evScan 3.2s ease-in-out 1.4s infinite;
+  pointer-events:none; mix-blend-mode:overlay;
+}
+@keyframes evScan{
+  0%   { transform:translateX(-100%); }
+  60%, 100%{ transform:translateX(120%); }
+}
+
+.item{
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.01)) , var(--glass-bg);
+  backdrop-filter:blur(30px) saturate(200%);
+  -webkit-backdrop-filter:blur(30px) saturate(200%);
+  box-shadow:
+    inset 0 0.6px 0 rgba(255,255,255,0.10),
+    inset 0 -0.4px 0 rgba(0,0,0,0.18),
+    0 6px 18px rgba(0,0,0,0.18);
+  transition:transform .15s ease, box-shadow .2s ease;
+  opacity:0;
+  animation:itemIn .55s cubic-bezier(.2,.7,.3,1) forwards;
+}
+[data-theme="light"] .item{
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.7), rgba(255,255,255,0.35)) , var(--glass-bg);
+  box-shadow:
+    inset 0 0.6px 0 rgba(255,255,255,0.7),
+    0 4px 14px rgba(0,0,0,0.05);
+}
+@keyframes itemIn{
+  from{ opacity:0; transform:translateY(8px) scale(0.985); filter:blur(2px); }
+  to  { opacity:1; transform:translateY(0)   scale(1);    filter:blur(0);    }
+}
+.item[data-st="risk"] .item-badge{
+  animation:badgePulse 1.8s ease-in-out infinite;
+}
+@keyframes badgePulse{
+  0%,100%{ box-shadow:0 0 6px var(--accent-c); transform:scale(1); }
+  50%    { box-shadow:0 0 14px var(--accent-c); transform:scale(1.25); }
+}
+.item:hover{ transform:translateY(-1px); box-shadow:inset 0 0.6px 0 rgba(255,255,255,0.14), 0 10px 24px rgba(0,0,0,0.24); }
+
+.cat-head .marker{
+  background:var(--glass-bg);
+  backdrop-filter:blur(20px) saturate(180%);
+  -webkit-backdrop-filter:blur(20px) saturate(180%);
+  box-shadow:inset 0 0.5px 0 var(--glass-shine), 0 4px 10px rgba(0,0,0,0.15);
+}
+
+.stat-strip > div{ position:relative; }
+.stat-strip > div::after{
+  content:""; position:absolute; left:14px; right:14px; bottom:6px; height:2px;
+  border-radius:2px;
+  background:linear-gradient(90deg, currentColor, transparent);
+  opacity:0.18;
+}
+
+.dock{
+  background:rgba(20,20,22,0.55) !important;
+  box-shadow:
+    inset 0 0.6px 0 rgba(255,255,255,0.14),
+    inset 0 -0.4px 0 rgba(0,0,0,0.45),
+    0 14px 40px rgba(0,0,0,0.55) !important;
+}
+.dock button.primary{
+  box-shadow:0 6px 18px rgba(94,92,230,0.55), inset 0 0.5px 0 rgba(255,255,255,0.25);
+}
+
+.sheet{
+  background:rgba(28,28,30,0.78);
+  backdrop-filter:blur(40px) saturate(200%);
+  -webkit-backdrop-filter:blur(40px) saturate(200%);
+}
+[data-theme="light"] .sheet{ background:rgba(255,255,255,0.85); }
+
+.scan-beam{
+  position:fixed; left:0; right:0; top:0; height:30vh; z-index:50;
+  pointer-events:none;
+  background:linear-gradient(180deg, rgba(94,92,230,0.0) 0%, rgba(94,92,230,0.18) 45%, rgba(255,69,58,0.22) 55%, rgba(255,69,58,0) 100%);
+  filter:blur(8px);
+  transform:translateY(-100%);
+  animation:beamSweep 1.6s cubic-bezier(.2,.7,.3,1) .15s 1 forwards;
+  mix-blend-mode:screen;
+}
+@keyframes beamSweep{
+  0%  { transform:translateY(-100%); opacity:0; }
+  20% { opacity:1; }
+  100%{ transform:translateY(420%); opacity:0; }
+}
+
+.hero-icon{ animation:iconBreathe 4.5s ease-in-out infinite; }
+@keyframes iconBreathe{
+  0%,100%{ transform:scale(1); box-shadow:inset 0 0 0 0.5px rgba(255,69,58,0.35), 0 0 0 0 rgba(255,69,58,0.0); }
+  50%    { transform:scale(1.04); box-shadow:inset 0 0 0 0.5px rgba(255,69,58,0.5), 0 0 22px rgba(255,69,58,0.18); }
+}
+
+@media (prefers-reduced-motion: reduce){
+  *, *::before, *::after{ animation:none !important; transition:none !important; }
+  .item{ opacity:1 !important; transform:none !important; filter:none !important; }
+  .prob-pill .pb > i{ width:var(--pw, 0%) !important; }
+  .scan-beam{ display:none !important; }
+}
 </style>
 </head>
 <body>
-<div class="hd">
-  <h1>Anti-Cheat Detector v2</h1>
-  <p>两阶段架构：设备画像 → 针对性风险检测</p>
-</div>
-<div class="prog"><div class="prog-f" id="prog"></div></div>
 
-<!-- 阶段1: 设备画像 -->
-<div class="profile" id="profile" style="display:none">
-  <div class="profile-icon" id="pf-icon">📱</div>
-  <div class="profile-type" id="pf-type">识别中...</div>
-  <div class="profile-conf" id="pf-conf"></div>
-  <div class="profile-tags" id="pf-tags"></div>
-</div>
-
-<!-- 阶段2: 风险评分 -->
-<div class="score-wrap">
-  <svg width="140" height="140" viewBox="0 0 140 140">
-    <circle class="bg-c" cx="70" cy="70" r="58"/>
-    <circle class="fg-c" id="s-arc" cx="70" cy="70" r="58" stroke-dasharray="364.4" stroke-dashoffset="364.4"/>
-  </svg>
-  <div class="score-v" id="s-val">--</div>
-</div>
-<div class="score-l" id="s-lbl">检测中...</div>
-<div class="stats">
-  <div class="stat"><div class="sn" style="color:var(--green)" id="c-pass">0</div><div class="sl">通过</div></div>
-  <div class="stat"><div class="sn" style="color:var(--red)" id="c-risk">0</div><div class="sl">风险</div></div>
-  <div class="stat"><div class="sn" style="color:var(--cyan)" id="c-info">0</div><div class="sl">信息</div></div>
+<!-- Sticky Dynamic Island -->
+<div class="island-area">
+  <div class="island" id="island">
+    <span class="island-dot" id="iDot"></span>
+    <span class="island-label" id="iLabel">准备检测...</span>
+    <span class="island-meta" id="iMeta"></span>
+  </div>
+  <button class="theme-btn" id="themeBtn" aria-label="theme">
+    <svg id="sunIco" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+  </button>
 </div>
 
-<div id="results"></div>
-<div class="acts">
-  <button class="btn" onclick="location.reload()">重新检测</button>
-  <button class="btn btn-p" onclick="exportJSON()">导出 JSON</button>
-</div>
+<main>
+  <!-- Hero -->
+  <section class="hero">
+    <div class="hero-top">
+      <div class="hero-icon" id="hIcon">❓</div>
+      <div class="hero-info">
+        <div class="hero-label">设备画像</div>
+        <div class="hero-name">
+          <span id="hName">识别中</span>
+          <span class="hero-conf"><b id="hConf">0</b>%</span>
+        </div>
+        <div class="hero-eval" id="hEval"></div>
+      </div>
+    </div>
+
+    <div class="hero-score">
+      <div class="score-arc">
+        <svg width="88" height="88" viewBox="0 0 88 88">
+          <defs>
+            <linearGradient id="g-safe" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#30D158"/><stop offset="100%" stop-color="#64D2FF"/>
+            </linearGradient>
+            <linearGradient id="g-warn" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#FF9F0A"/><stop offset="100%" stop-color="#FFD60A"/>
+            </linearGradient>
+            <linearGradient id="g-risk" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#FF453A"/><stop offset="100%" stop-color="#FF9F0A"/>
+            </linearGradient>
+          </defs>
+          <circle cx="44" cy="44" r="36" stroke="rgba(120,120,128,0.20)" stroke-width="7" fill="none"/>
+          <circle id="ring" cx="44" cy="44" r="36" stroke="url(#g-risk)" stroke-width="7" fill="none"
+            stroke-linecap="round" stroke-dasharray="226.2" stroke-dashoffset="226.2"
+            transform="rotate(-90 44 44)" style="transition:stroke-dashoffset 1.4s cubic-bezier(.2,.7,.3,1)"/>
+        </svg>
+        <b id="scoreN">--</b>
+      </div>
+      <div class="score-side">
+        <div class="vt">综合判定</div>
+        <div class="vv" id="vText">检测中...</div>
+        <div class="score-formula tabular" id="scoreFormula"></div>
+      </div>
+    </div>
+
+    <div class="prob-row" id="probs"></div>
+
+    <div class="stat-strip">
+      <div data-st="pass"><b style="color:var(--green)" id="sPass">0</b><small>通过</small></div>
+      <div data-st="risk"><b style="color:var(--red)" id="sRisk">0</b><small>风险</small></div>
+      <div data-st="info"><b style="color:var(--info)" id="sInfo">0</b><small>信息</small></div>
+    </div>
+  </section>
+
+  <!-- Hard evidence ribbon -->
+  <div class="ev-row" id="evRow">
+    <svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2L1 21h22L12 2zm-1 14v-4h2v4h-2zm0 2h2v2h-2z"/></svg>
+    <span class="ev-t">硬证据</span>
+    <span class="ev-c" id="evMain"></span>
+  </div>
+
+  <!-- Activity timeline -->
+  <section class="section">
+    <div class="section-h">
+      <h2>检测活动</h2>
+      <span id="totalCount"></span>
+    </div>
+    <div class="tl" id="tl"></div>
+  </section>
+</main>
+
+<nav class="dock">
+  <button id="exportBtn">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M5 21h14"/></svg>
+    导出 JSON
+  </button>
+  <button class="primary" id="rescanBtn">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
+    重新检测
+  </button>
+</nav>
+
+<div class="sheet-bg" id="sheetBg"></div>
+<aside class="sheet" id="sheet">
+  <div class="grabber"></div>
+  <div class="sheet-head">
+    <div class="sheet-name" id="shName"></div>
+    <div class="sheet-meta">
+      <span class="sheet-badge" id="shBadge"></span>
+      <span id="shSum"></span>
+    </div>
+  </div>
+  <div class="sheet-body"><pre id="shJson"></pre></div>
+</aside>
+
+<div class="scan-beam"></div>
 
 <script>
 // ==================== 框架 ====================
 const checks = [], results = {};
-let done = 0, deviceProfile = null;
+let done = 0, deviceProfile = null, startTime = 0;
 
-// status: pass(通过,+分) | risk(风险,-分) | info(信息,不影响分)
 function reg(cat, name, fn) { checks.push({ cat, name, fn }); }
+
 function report(name, status, summary, detail) {
   results[name] = { status, summary, detail: detail || {}, ts: Date.now() };
   done++;
-  renderCard(name);
+  // 更新对应 timeline 项
+  const el = document.querySelector(`.item[data-name="${CSS.escape(name)}"]`);
+  if (el) {
+    el.dataset.st = status;
+    const badge = el.querySelector('.item-badge');
+    const sum = el.querySelector('.item-sum');
+    const time = el.querySelector('.item-time');
+    if (sum) sum.textContent = summary;
+    if (time) {
+      const elapsed = ((performance.now() - startTime) / 1000).toFixed(3);
+      time.textContent = '+' + elapsed + 's';
+    }
+  }
   updateScore();
-  document.getElementById('prog').style.width = (done / checks.length * 100) + '%';
 }
-
-const SL = { pass:'通过', risk:'风险', info:'信息', wait:'...' };
-function renderCard(name) {
-  const el = document.getElementById('c-' + H(name));
-  if (!el) return;
-  const r = results[name], b = el.querySelector('.cd-b'), bc = {pass:'b-p',risk:'b-r',info:'b-i'};
-  b.className = 'cd-b ' + (bc[r.status]||'b-x'); b.textContent = SL[r.status]||r.status;
-  el.querySelector('.cd-s').textContent = r.summary;
-  el.querySelector('.cd-d').textContent = typeof r.detail==='object'?JSON.stringify(r.detail,null,2):String(r.detail);
-}
-function H(n){let h=0;for(let i=0;i<n.length;i++)h=((h<<5)-h+n.charCodeAt(i))|0;return Math.abs(h)}
 
 let lastVerdict = null;
 
@@ -165,18 +819,14 @@ function computeFinalVerdict(results, deviceProfile) {
 
   // === 综合 score 上限 ===
   let finalScore = rawScore;
-  // critical risk
   if (criticalRisks.length >= 3) finalScore = Math.min(finalScore, 15);
   else if (criticalRisks.length >= 2) finalScore = Math.min(finalScore, 30);
   else if (criticalRisks.length >= 1) finalScore = Math.min(finalScore, 49);
-  // 移动端组合异常
   if (mobileAnomalies >= 5) finalScore = Math.min(finalScore, 15);
   else if (mobileAnomalies >= 4) finalScore = Math.min(finalScore, 30);
   else if (mobileAnomalies >= 3) finalScore = Math.min(finalScore, 49);
-  // iOS 伪装
   if (iosAnomalies >= 2) finalScore = Math.min(finalScore, 49);
   else if (iosAnomalies >= 1 && !deviceProfile?.signals?.isAppleGPU && deviceProfile?.signals?.gpu) finalScore = Math.min(finalScore, 49);
-  // riskC 过多
   if (riskC >= 5) finalScore = Math.min(finalScore, 49);
   else if (riskC >= 3) finalScore = Math.min(finalScore, 79);
 
@@ -184,7 +834,7 @@ function computeFinalVerdict(results, deviceProfile) {
   let verdict, verdictColor;
   if (!isSafeType && (emuPct >= 50 || cloudPct >= 50)) {
     verdict = `${profileType} (置信度${Math.max(emuPct,cloudPct)}%)`;
-    verdictColor = emuPct>=70||cloudPct>=70 ? 'var(--red)' : 'var(--yellow)';
+    verdictColor = emuPct>=70||cloudPct>=70 ? 'var(--red)' : 'var(--orange)';
   } else if (criticalRisks.length) {
     verdict = `高风险设备 (${criticalRisks[0]})`;
     verdictColor = 'var(--red)';
@@ -193,13 +843,13 @@ function computeFinalVerdict(results, deviceProfile) {
     verdictColor = 'var(--red)';
   } else if (iosAnomalies >= 2) {
     verdict = `存在风险 (iOS伪装${iosAnomalies}项异常)`;
-    verdictColor = 'var(--yellow)';
+    verdictColor = 'var(--orange)';
   } else if (finalScore >= 80 && isSafeType && riskC <= 2) {
     verdict = '设备安全';
     verdictColor = 'var(--green)';
   } else if (finalScore >= 50) {
     verdict = '存在风险';
-    verdictColor = 'var(--yellow)';
+    verdictColor = 'var(--orange)';
   } else {
     verdict = '高风险设备';
     verdictColor = 'var(--red)';
@@ -209,52 +859,246 @@ function computeFinalVerdict(results, deviceProfile) {
     criticalRisks, mobileAnomalies, iosAnomalies, runMode: location.protocol };
 }
 
+function getVerdictTone(finalScore, verdict, criticalRisks, mobileAnomalies) {
+  if (criticalRisks && criticalRisks.length > 0) return 'risk';
+  if (mobileAnomalies && mobileAnomalies >= 3) return 'risk';
+  if (finalScore >= 80 && verdict === '设备安全') return 'safe';
+  if (finalScore >= 50) return 'warn';
+  return 'risk';
+}
+
 function updateScore() {
   const v = Object.values(results);
   if (!v.length) return;
   const passC = v.filter(x=>x.status==='pass').length;
   const riskC = v.filter(x=>x.status==='risk').length;
   const infoC = v.filter(x=>x.status==='info').length;
-  document.getElementById('c-pass').textContent = passC;
-  document.getElementById('c-risk').textContent = riskC;
-  document.getElementById('c-info').textContent = infoC;
+  document.getElementById('sPass').textContent = passC;
+  document.getElementById('sRisk').textContent = riskC;
+  document.getElementById('sInfo').textContent = infoC;
 
-  // 实时显示基础分
+  // Dynamic Island 更新
+  document.getElementById('iLabel').textContent = `检测中... · ${done}/${checks.length} 项`;
+  document.getElementById('iMeta').textContent = '';
+
+  // 实时基础分
   const scored = passC + riskC;
   const checkRate = scored === 0 ? 100 : 100 * passC / scored;
   const emuConf = (deviceProfile?.scores?.['模拟器'] || 0) / 100;
   const cloudConf = (deviceProfile?.scores?.['云真机'] || 0) / 100;
   const riskConf = Math.max(emuConf, cloudConf);
   const score = Math.max(0, Math.min(100, Math.round(checkRate * (1 - riskConf))));
-  const arc = document.getElementById('s-arc');
-  arc.style.strokeDashoffset = 364.4 * (1 - score / 100);
-  arc.style.stroke = score >= 80 ? 'var(--green)' : score >= 50 ? 'var(--yellow)' : 'var(--red)';
-  document.getElementById('s-val').textContent = score;
-  document.getElementById('s-val').style.color = arc.style.stroke;
 
   if (done >= checks.length) {
     // 所有检测完成 → 统一最终判定
     lastVerdict = computeFinalVerdict(results, deviceProfile);
     const fs = lastVerdict.finalScore;
-    arc.style.strokeDashoffset = 364.4 * (1 - fs / 100);
-    arc.style.stroke = fs >= 80 ? 'var(--green)' : fs >= 50 ? 'var(--yellow)' : 'var(--red)';
-    document.getElementById('s-val').textContent = fs;
-    document.getElementById('s-val').style.color = arc.style.stroke;
-    const lbl = document.getElementById('s-lbl');
-    lbl.textContent = lastVerdict.verdict;
-    lbl.style.color = lastVerdict.verdictColor;
+    const tone = getVerdictTone(fs, lastVerdict.verdict, lastVerdict.criticalRisks, lastVerdict.mobileAnomalies);
+
+    // 更新 ring
+    const ring = document.getElementById('ring');
+    ring.style.strokeDashoffset = 226.2 * (1 - fs / 100);
+    ring.setAttribute('stroke', 'url(#g-' + tone + ')');
+
+    // 分数动画
+    animateScore(fs);
+
+    // Verdict 文本
+    const vText = document.getElementById('vText');
+    vText.textContent = lastVerdict.verdict;
+    vText.style.color = lastVerdict.verdictColor;
+
+    // Formula
+    const pRate = (scored === 0 ? 100 : Math.round(100 * passC / scored));
+    document.getElementById('scoreFormula').innerHTML =
+      `<b>${pRate}%</b> 通过率 × <b>${(1-riskConf).toFixed(2)}</b> 可信度 = <b>${fs}</b>`;
+
+    // Island 完成态
+    const dot = document.getElementById('iDot');
+    const dotColors = {safe:'var(--green)', warn:'var(--orange)', risk:'var(--red)'};
+    dot.style.background = dotColors[tone] || 'var(--red)';
+    dot.style.animation = 'none';
+    document.getElementById('iLabel').textContent = `检测完成 · ${checks.length} 项`;
+    document.getElementById('iMeta').textContent = `分 ${fs}`;
+    document.getElementById('iMeta').style.color = lastVerdict.verdictColor;
+
+    // 更新 totalCount
+    document.getElementById('totalCount').textContent = `${checks.length} 项 · ${new Date().toLocaleTimeString()}`;
+
+    // 更新 category counts
+    updateCatCounts();
+  }
+}
+
+function animateScore(target) {
+  const el = document.getElementById('scoreN');
+  el.textContent = '0';
+  const dur = 1400, start = performance.now();
+  function tick(t) {
+    const k = Math.min(1, (t - start) / dur);
+    const eased = 1 - Math.pow(1 - k, 3);
+    el.textContent = Math.round(target * eased);
+    if (k < 1) requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
+function updateCatCounts() {
+  const cats = document.querySelectorAll('.cat[data-cat]');
+  cats.forEach(catEl => {
+    const catName = catEl.dataset.cat;
+    const items = catEl.querySelectorAll('.item');
+    const counts = {pass:0, risk:0, info:0};
+    items.forEach(it => {
+      const st = it.dataset.st;
+      if (counts[st] !== undefined) counts[st]++;
+    });
+    const countsEl = catEl.querySelector('.cat-counts');
+    if (countsEl) {
+      countsEl.innerHTML = ['risk','pass','info']
+        .filter(k => counts[k] > 0)
+        .map(k => `<span data-ct="${k}">${counts[k]}</span>`)
+        .join('');
+    }
+  });
+}
+
+function renderProfile(p) {
+  const icons = {iPhone:'🍎',Android:'📱',PC:'💻','模拟器':'⚠️','云真机':'☁️',unknown:'❓'};
+  const tintMap = {iPhone:'--tint-green',Android:'--tint-green',PC:'--tint-blue','模拟器':'--tint-red','云真机':'--tint-orange',unknown:'--tint-blue'};
+  const iconEl = document.getElementById('hIcon');
+  iconEl.textContent = icons[p.type] || '❓';
+  iconEl.style.background = `var(${tintMap[p.type] || '--tint-blue'})`;
+
+  document.getElementById('hName').textContent = p.type;
+  document.getElementById('hConf').textContent = p.confidence;
+
+  // One-line eval
+  const evalEl = document.getElementById('hEval');
+  if (p.hardEvidence && p.hardEvidence.length > 0) {
+    evalEl.textContent = '硬证据: ' + p.reason;
+  } else {
+    evalEl.textContent = Object.entries(p.scores).filter(([,v])=>v>0).map(([k,v])=>`${k} ${v}%`).join(' · ');
+  }
+
+  // Confidence pill color
+  const confPill = document.querySelector('.hero-conf');
+  if (p.type === '模拟器' || p.type === '云真机') {
+    confPill.style.background = 'var(--tint-red)';
+    confPill.style.color = 'var(--red)';
+  } else {
+    confPill.style.background = 'var(--tint-green)';
+    confPill.style.color = 'var(--green)';
+  }
+
+  // Probability bars
+  const probColors = {iPhone:'#BF5AF2',Android:'#30D158',PC:'#0A84FF','模拟器':'#FF453A','云真机':'#FF9F0A'};
+  const probIcons = {iPhone:'🍎',Android:'📱',PC:'💻','模拟器':'⚠️','云真机':'☁️'};
+  const probsEl = document.getElementById('probs');
+  probsEl.innerHTML = Object.entries(p.scores)
+    .filter(([,v]) => v > 0)
+    .sort((a,b) => b[1] - a[1])
+    .map(([type, val]) => `
+      <div class="prob-pill" style="--pc:${probColors[type]||'#999'}">
+        <span class="pn">${probIcons[type]||''} ${type}</span>
+        <span class="pv">${val}%</span>
+        <span class="pb"><i style="--pw:${val}%"></i></span>
+      </div>`).join('');
+
+  // Hard evidence row
+  const evRow = document.getElementById('evRow');
+  if (p.hardEvidence && p.hardEvidence.length > 0) {
+    evRow.classList.add('show');
+    document.getElementById('evMain').textContent = p.hardEvidence.join(' · ');
   }
 }
 
 function buildUI() {
-  const c = document.getElementById('results'); c.innerHTML = '';
-  let last = '';
+  const tl = document.getElementById('tl');
+  tl.innerHTML = '';
+  const catMap = {};
+  const catOrder = [];
   checks.forEach(ck => {
-    if (ck.cat !== last) { last = ck.cat; c.innerHTML += `<div class="cat"><div class="cat-d"></div><div class="cat-n">${ck.cat}</div></div>`; }
-    c.innerHTML += `<div class="cd" id="c-${H(ck.name)}" onclick="this.classList.toggle('open')"><div class="cd-t"><span class="cd-n">${ck.name}</span><span class="cd-b b-x">...</span></div><div class="cd-s" style="color:var(--text2)">检测中</div><div class="cd-d"></div></div>`;
+    if (!catMap[ck.cat]) { catMap[ck.cat] = []; catOrder.push(ck.cat); }
+    catMap[ck.cat].push(ck);
+  });
+
+  catOrder.forEach((catName, i) => {
+    const items = catMap[catName];
+    const open = i < 2 ? 'open' : '';
+    const catHtml = `
+    <div class="cat ${open}" data-cat="${catName}">
+      <div class="cat-head">
+        <span class="marker">${String(i+1).padStart(2,'0')}</span>
+        <span class="cat-name">${catName}</span>
+        <span class="cat-counts"></span>
+        <span class="cat-chev"><svg width="8" height="14" viewBox="0 0 8 14"><path d="M1 1l6 6-6 6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      </div>
+      <div class="cat-body">
+        ${items.map((it, j) => `
+          <div class="item" data-st="wait" data-name="${it.name}" style="animation-delay:${(i*60 + j*80 + 200)}ms">
+            <div class="item-head"><span class="item-badge"></span><span class="item-name">${it.name}</span></div>
+            <div class="item-sum">检测中...</div>
+            <div class="item-time"></div>
+          </div>`).join('')}
+      </div>
+    </div>`;
+    tl.insertAdjacentHTML('beforeend', catHtml);
+  });
+
+  // 事件代理
+  tl.addEventListener('click', e => {
+    const head = e.target.closest('.cat-head');
+    const item = e.target.closest('.item');
+    if (head) head.parentElement.classList.toggle('open');
+    else if (item && item.dataset.name) openSheet(item.dataset.name);
   });
 }
 
+// ─── Sheet ───
+function syntaxJson(obj) {
+  let s = JSON.stringify(obj, (k,v) => v === Infinity ? '__INF__' : v, 2);
+  if (!s) return '';
+  s = s.replace(/"__INF__"/g, 'Infinity');
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/("(?:[^"\\]|\\.)*")(\s*:)/g,'<span class="k">$1</span>$2')
+    .replace(/:\s*("(?:[^"\\]|\\.)*")/g,': <span class="s">$1</span>')
+    .replace(/:\s*(true|false|null)/g,': <span class="b">$1</span>')
+    .replace(/:\s*(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?|Infinity)/gi,': <span class="n">$1</span>');
+}
+
+function openSheet(name) {
+  const r = results[name];
+  if (!r) return;
+  document.getElementById('shName').textContent = name;
+  const b = document.getElementById('shBadge');
+  b.textContent = r.status;
+  b.parentElement.dataset.ct = r.status;
+  document.getElementById('shSum').textContent = r.summary;
+  document.getElementById('shJson').innerHTML = syntaxJson(r.detail);
+  document.getElementById('sheetBg').classList.add('show');
+  document.getElementById('sheet').classList.add('show');
+}
+
+document.getElementById('sheetBg').addEventListener('click', () => {
+  document.getElementById('sheetBg').classList.remove('show');
+  document.getElementById('sheet').classList.remove('show');
+});
+
+// ─── Theme ───
+function setTheme(t) {
+  document.documentElement.dataset.theme = t;
+  document.getElementById('sunIco').innerHTML = t === 'dark'
+    ? '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>'
+    : '<path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z" fill="currentColor" stroke="none"/>';
+  try { localStorage.setItem('h5ac-theme', t); } catch(e) {}
+}
+document.getElementById('themeBtn').addEventListener('click', () => {
+  setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+});
+try { setTheme(localStorage.getItem('h5ac-theme') || 'dark'); } catch(e) { setTheme('dark'); }
+
+// ─── Export ───
 function exportJSON() {
   const d = { timestamp: new Date().toISOString(), userAgent: navigator.userAgent,
     deviceProfile, verdict: lastVerdict, results };
@@ -262,6 +1106,8 @@ function exportJSON() {
   const a = document.createElement('a'); a.href = URL.createObjectURL(b);
   a.download = 'anticheat-' + Date.now() + '.json'; a.click();
 }
+document.getElementById('exportBtn').addEventListener('click', exportJSON);
+document.getElementById('rescanBtn').addEventListener('click', () => run());
 
 // ==================== 阶段1: 设备画像 ====================
 
@@ -298,10 +1144,10 @@ function identifyDevice() {
 
   // iOS 信号
   if (/iphone|ipad|ipod/i.test(ua) || (pf==='MacIntel' && s.signals.maxTouch>1)) pIPhone+=25;
-  if (s.signals.hasDMPermission) pIPhone+=30; // iOS 13+ 独有, 不可伪造
+  if (s.signals.hasDMPermission) pIPhone+=30;
   if (s.signals.isAppleGPU) pIPhone+=25;
   if (!s.signals.hasBattery && !s.signals.hasConnection && !s.signals.hasAccelerometer && /iphone|ipad/i.test(ua)) pIPhone+=15;
-  if (s.signals.hasChrome && pIPhone>0) pIPhone-=20; // 真 Safari 没有 window.chrome
+  if (s.signals.hasChrome && pIPhone>0) pIPhone-=20;
 
   // Android 信号
   if (/android/i.test(ua) && /linux arm/i.test(pf)) pAndroid+=25;
@@ -319,44 +1165,34 @@ function identifyDevice() {
   if (/android/i.test(ua) && s.signals.isDesktopGPU) pEmu+=25;
   if (/android/i.test(ua) && /Win/i.test(pf)) pEmu+=30;
   if (s.signals.isMobileGPU && /Win|Mac/.test(pf) && !/MacIntel.*maxTouch/.test('')) pEmu+=15;
-  // x86 平台 + Android = 模拟器 (真机 Android 都是 ARM)
   if (/android/i.test(ua) && /i[36]86|x86_64/i.test(pf)) pEmu+=35;
   if (s.signals.isMobileGPU && /i[36]86|x86_64/i.test(pf)) pEmu+=20;
   const chrM = ua.match(/Chrome\/(\d+)/);
   if (chrM && parseInt(chrM[1])<115 && /android/i.test(ua)) pEmu+=15;
 
-  // 云真机信号 (后续阶段2补充)
-
-  // === 硬证据短路: 确定性信号直接判定, 不走加权 ===
+  // === 硬证据短路 ===
   s.hardEvidence = [];
 
-  // x86/x86_64 平台 + Android UA = 100% 模拟器 (没有任何真实手机是 x86)
   if (/android/i.test(ua) && /i[36]86|x86_64/i.test(pf)) {
     s.hardEvidence.push('x86平台运行Android');
-    // 细分模拟器品牌
     if (/i686/i.test(pf) && s.signals.cores<=4 && s.signals.memory<=4)
       s.hardEvidence.push('特征匹配:雷电模拟器');
   }
 
-  // 软件渲染 GPU = 100% 虚拟环境
   if (s.signals.isSoftGPU) s.hardEvidence.push('软件渲染GPU(SwiftShader/llvmpipe)');
 
-  // Android UA + Windows/Mac 平台 = 100% 模拟器
   if (/android/i.test(ua) && /Win|Mac/.test(pf) && !(/MacIntel/.test(pf)&&s.signals.maxTouch>1))
     s.hardEvidence.push('Android UA但桌面操作系统');
 
-  // ARM GPU 在 x86 平台 = 翻译层
   if (s.signals.isMobileGPU && !s.signals.isAppleGPU && /i[36]86|x86_64/i.test(pf))
     s.hardEvidence.push('ARM GPU通过x86翻译层运行');
 
   if (s.hardEvidence.length > 0) {
-    // 硬证据存在: 直接判定模拟器 100%
     s.type = '模拟器';
     s.confidence = 100;
     s.scores = {iPhone:0, Android:0, PC:0, '模拟器':100, '云真机':0};
     s.reason = s.hardEvidence.join(' + ');
   } else {
-    // 无硬证据: 走加权评分
     const scores = {iPhone:pIPhone, Android:pAndroid, PC:pPC, '模拟器':pEmu, '云真机':pCloud};
     const total = Math.max(1, Object.values(scores).reduce((a,b)=>a+b,0));
     const best = Object.entries(scores).sort((a,b)=>b[1]-a[1]);
@@ -376,20 +1212,6 @@ function identifyDevice() {
   s.tags.push('Touch='+s.signals.maxTouch);
 
   return s;
-}
-
-function renderProfile(p) {
-  const el = document.getElementById('profile'); el.style.display='block';
-  const icons = {iPhone:'🍎',Android:'🤖',PC:'💻','模拟器':'⚠️','云真机':'☁️',unknown:'❓'};
-  document.getElementById('pf-icon').textContent = icons[p.type]||'❓';
-  document.getElementById('pf-type').textContent = p.type;
-  const confLine = p.hardEvidence?.length
-    ? `硬证据: ${p.reason}`
-    : `置信度 ${p.confidence}% | ` + Object.entries(p.scores).map(([k,v])=>`${k}${v}%`).join(' ');
-  document.getElementById('pf-conf').textContent = confLine;
-  const tags = document.getElementById('pf-tags');
-  tags.innerHTML = '';
-  p.tags.forEach(t => { const sp = document.createElement('span'); sp.className = 'tag'; sp.textContent = t; tags.appendChild(sp); });
 }
 
 // ==================== 辅助 ====================
@@ -430,7 +1252,6 @@ reg('环境验证','GPU vs 平台一致性',async()=>{
 
 reg('环境验证','电池状态',async()=>{
   if(!navigator.getBattery){
-    // iOS/Safari 不支持 Battery API — 符合预期
     if(isIOS()) return report('电池状态','pass','iOS 不提供 Battery API',{expected:true});
     return report('电池状态','info','Battery API 不可用',null);
   }
@@ -447,7 +1268,6 @@ reg('环境验证','传感器',async()=>{
     const has=typeof window.DeviceMotionEvent!=='undefined'&&typeof window.DeviceMotionEvent.requestPermission==='function';
     return report('传感器',has?'pass':'info',has?'iOS DeviceMotion API 可用':'iOS 传感器需用户授权',{iosPermission:has});
   }
-  // Android / 模拟器: 检查 Generic Sensor API
   const r={};let miss=0;
   const ck=(n,C)=>new Promise(rv=>{
     try{
@@ -514,15 +1334,10 @@ reg('环境验证','媒体设备',async()=>{
 });
 
 reg('环境验证','平台 API 三信号',async()=>{
-  // FingerprintJS isMobile 判断: 3个API在桌面和移动端存在性不同
-  // SharedWorker: 桌面有, 手机无
-  // connection.ontypechange: 手机有, 桌面无
-  // Audio.sinkId: 桌面有, 手机无
   const d={};
   d.hasSharedWorker='SharedWorker' in window;
   d.hasOntypechange=!!(navigator.connection&&'ontypechange' in navigator.connection);
   d.hasSinkId=(()=>{try{return 'sinkId' in new Audio()}catch(e){return false}})();
-  // 移动端信号: 无SharedWorker + 有ontypechange + 无sinkId
   let mobileSignals=0;
   if(!d.hasSharedWorker) mobileSignals++;
   if(d.hasOntypechange) mobileSignals++;
@@ -539,7 +1354,6 @@ reg('环境验证','平台 API 三信号',async()=>{
 });
 
 reg('环境验证','navigator.plugins',async()=>{
-  // 手机浏览器 plugins 永远为空, 桌面有 PDF Viewer 等
   const plugins=navigator.plugins;
   const list=[];for(let i=0;i<plugins.length;i++)list.push(plugins[i].name);
   const d={count:list.length,list};
@@ -692,22 +1506,14 @@ reg('工具检测','自动化框架',async()=>{
 
 reg('工具检测','Headless 深度检测',async()=>{
   const d={},issues=[],critical=[];
-  // HeadlessChrome UA — 最直接的信号
   if(/HeadlessChrome/i.test(navigator.userAgent)) critical.push('UA含HeadlessChrome');
-  // navigator.webdriver — Selenium/Puppeteer/Playwright 标志
   if(navigator.webdriver) critical.push('navigator.webdriver=true');
-  // chrome 对象结构
   if(!window.chrome&&isChromeBrowser()) issues.push('无window.chrome');
-  // Chrome UA 但 plugins 为空 (正常Chrome至少有PDF Viewer)
   if(/Chrome\/\d+/i.test(navigator.userAgent)&&navigator.plugins.length===0&&!isMobile()) issues.push('Chrome UA但plugins为空');
-  // Permissions 异常
   try{const np=await navigator.permissions.query({name:'notifications'});d.notifPerm=np.state;
     if(np.state==='denied'&&Notification.permission==='default') critical.push('Permissions矛盾')}catch(e){}
-  // rtt=0
   if(navigator.connection?.rtt===0) issues.push('rtt=0');
-  // outerWidth=0
   if(window.outerWidth===0&&window.outerHeight===0) issues.push('outer=0');
-  // languages 缺失或异常
   if(!navigator.languages||navigator.languages.length===0) issues.push('languages为空');
   d.critical=critical;d.issues=issues;
   const all=critical.concat(issues);
@@ -728,13 +1534,10 @@ reg('工具检测','DevTools 检测',async()=>{
 
 reg('工具检测','浏览器版本',async()=>{
   const ua=navigator.userAgent;
-  // 只对 Chrome 内核检查版本, 其他浏览器不适用
   const m=ua.match(/Chrome\/(\d+)/);
   if(!m) return report('浏览器版本','pass','非 Chrome 内核',{ua:ua.substring(0,60)});
-  // 非 Chrome 浏览器 (Edge/Opera/Brave 等) 共享 Chrome 版本号但不代表过时
   if(!isChromeBrowser()) return report('浏览器版本','pass',`Chromium ${m[1]} (非Chrome)`,{ver:parseInt(m[1])});
   const ver=parseInt(m[1]);
-  // Android + 旧 Chrome 是强烈的模拟器信号 (MuMu 常用 Chrome 110)
   if(ver<115&&isAndroid()) report('浏览器版本','risk',`Android Chrome ${ver} 严重过时 (模拟器特征)`,{ver});
   else if(ver<115) report('浏览器版本','risk',`Chrome ${ver} 严重过时`,{ver});
   else if(ver<135) report('浏览器版本','info',`Chrome ${ver}`,{ver});
@@ -849,7 +1652,6 @@ reg('行为分析','FP/FCP/LCP',async()=>{
 });
 
 reg('行为分析','触摸事件真实性',async()=>{
-  // 真机触摸有force/radiusX/radiusY变化, 模拟器通常全为0或固定值
   if(!isMobile()&&!isAndroid()) return report('触摸事件真实性','info','非移动端 (跳过)',{skip:true});
   return new Promise(rv=>{
     const samples=[];let reported=false;
@@ -891,10 +1693,9 @@ reg('行为分析','触摸事件真实性',async()=>{
   });
 });
 
-// ---- v8 新增检测 (来源: WPK H5 v8 CDP 实测报告) ----
+// ---- v8 新增检测 ----
 
 reg('v8 新增','eval 锁定检测',async()=>{
-  // WPK H5: eval 被 isValidCode 拦截 + Object.defineProperty configurable:false
   const d={};
   try{
     const desc=Object.getOwnPropertyDescriptor(window,'eval');
@@ -912,11 +1713,9 @@ reg('v8 新增','eval 锁定检测',async()=>{
 });
 
 reg('v8 新增','CSP 安全策略',async()=>{
-  // WPK H5 v8: 无 CSP → 任何脚本可注入
   const d={};
   const meta=document.querySelector('meta[http-equiv="Content-Security-Policy"]');
   d.metaCSP=meta?.content||null;
-  // 尝试通过 fetch 自身页面检查响应头 (同源)
   try{
     const r=await fetch(location.href,{method:'HEAD',cache:'no-store'});
     d.headerCSP=r.headers.get('Content-Security-Policy')||null;
@@ -928,22 +1727,18 @@ reg('v8 新增','CSP 安全策略',async()=>{
 });
 
 reg('v8 新增','注入脚本检测',async()=>{
-  // WPK H5: loadPageInfo() 收集所有 <script> 标签检测注入
   const scripts=document.querySelectorAll('script');
   const d={total:scripts.length,inline:0,external:0,list:[]};
   scripts.forEach(s=>{
     if(s.src){d.external++;d.list.push(s.src.substring(0,80))}
     else{d.inline++;d.list.push('(inline '+s.textContent.length+' chars)')}
   });
-  // 当前页面是单文件, 只应有 1 个 inline script
-  // 如果有外部 script 或多个 inline, 可能被注入
   if(d.external>0) report('注入脚本检测','risk',`检测到 ${d.external} 个外部脚本`,d);
   else if(d.inline>2) report('注入脚本检测','info',`${d.inline} 个内联脚本`,d);
   else report('注入脚本检测','pass',`${d.total} 个脚本 (${d.inline} 内联)`,d);
 });
 
 reg('v8 新增','XHR/WS 拦截检测',async()=>{
-  // WPK H5: checkassets 拦截了 XHR.open 和 WebSocket.send
   const d={};
   const fns={
     'XHR.open':XMLHttpRequest.prototype.open,
@@ -965,12 +1760,10 @@ reg('v8 新增','XHR/WS 拦截检测',async()=>{
 });
 
 reg('v8 新增','debugger 计时检测',async()=>{
-  // WPK H5 GeoComply: 插入 debugger 语句, 计时差超阈值=DevTools 打开
   const d={};
   try{
-    const threshold=100; // ms
+    const threshold=100;
     const t1=performance.now();
-    // 在 Function 中执行 debugger, DevTools 打开时会暂停
     (new Function('debugger'))();
     const t2=performance.now();
     d.elapsed=t2-t1;
@@ -983,7 +1776,6 @@ reg('v8 新增','debugger 计时检测',async()=>{
 });
 
 reg('v8 新增','matchMedia 特征',async()=>{
-  // WPK H5 FingerprintJS: 8 种 matchMedia 信号
   const queries={
     'color-gamut-srgb':window.matchMedia('(color-gamut: srgb)').matches,
     'color-gamut-p3':window.matchMedia('(color-gamut: p3)').matches,
@@ -999,8 +1791,6 @@ reg('v8 新增','matchMedia 特征',async()=>{
     'pointer-coarse':window.matchMedia('(pointer: coarse)').matches,
   };
   const d={...queries};
-  // 手机应有 coarse pointer, 无 hover; PC 应有 hover + fine pointer
-  // Headless Chrome 通常没有 hover 和 pointer
   if(!queries['hover']&&!queries['pointer-fine']&&!queries['pointer-coarse'])
     report('matchMedia 特征','risk','无 hover/pointer 能力 (Headless?)',d);
   else if(isMobile()&&queries['hover']&&queries['pointer-fine']&&!queries['pointer-coarse'])
@@ -1016,11 +1806,9 @@ reg('v8 新增','matchMedia 特征',async()=>{
   }
 });
 
-// ---- 深度指纹 (真实检测能力, 不靠调分) ----
+// ---- 深度指纹 ----
 
 reg('深度指纹','Math 精度指纹',async()=>{
-  // ARM 和 x86 的浮点运算结果在最后几位有差异
-  // 来源: CreepJS — 通过 Math 函数结果区分真实架构
   const tests={
     acos:Math.acos(0.123456789),atan:Math.atan(2),atan2:Math.atan2(1,2),
     sin:Math.sin(1),cos:Math.cos(1),tan:Math.tan(1),
@@ -1031,20 +1819,15 @@ reg('深度指纹','Math 精度指纹',async()=>{
   const fp=JSON.stringify(tests);
   const hash=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(fp));
   const h=Array.from(new Uint8Array(hash)).map(b=>b.toString(16).padStart(2,'0')).join('').substring(0,16);
-  // 关键: 声称 ARM 平台但 Math 结果与 x86 一致 = 翻译层模拟器
   const pf=navigator.platform;
   const d={hash:h,platform:pf,sample_sin:tests.sin,sample_exp:tests.exp};
-  // x86 模拟器通过翻译层跑 ARM 代码, Math 精度通常与 x86 native 不同
-  // 这里只采集指纹上报, 因为没有标准"ARM Math值"可对比
   report('Math 精度指纹','info',`Hash: ${h} (采集,无基线对比)`,d);
 });
 
 reg('深度指纹','WebGL 渲染指纹',async()=>{
-  // 不同 GPU 渲染同一内容的像素结果不同 — 真 GPU vs 模拟 GPU
   const cv=document.createElement('canvas');cv.width=64;cv.height=64;
   const gl=cv.getContext('webgl');
   if(!gl) return report('WebGL 渲染指纹','info','WebGL 不可用',null);
-  // 绘制一个有梯度和混合的三角形
   const vs=gl.createShader(gl.VERTEX_SHADER);
   gl.shaderSource(vs,'attribute vec2 p;varying vec2 v;void main(){v=p;gl_Position=vec4(p,0,1);}');gl.compileShader(vs);
   const fs=gl.createShader(gl.FRAGMENT_SHADER);
@@ -1065,7 +1848,6 @@ reg('深度指纹','AudioContext 延迟',async()=>{
     const ac=new AudioContext();
     const d={baseLatency:ac.baseLatency,outputLatency:ac.outputLatency,sampleRate:ac.sampleRate,state:ac.state};
     ac.close();
-    // baseLatency=0 可能表示虚拟音频设备
     if(d.baseLatency===0&&isMobile()) report('AudioContext 延迟','risk','baseLatency=0 (虚拟音频)',d);
     else report('AudioContext 延迟','pass',`延迟${(d.baseLatency*1000).toFixed(1)}ms 采样率${d.sampleRate}`,d);
   }catch(e){report('AudioContext 延迟','info','不可用',e.message)}
@@ -1073,58 +1855,47 @@ reg('深度指纹','AudioContext 延迟',async()=>{
 
 reg('深度指纹','屏幕物理尺寸',async()=>{
   const w=screen.width,h=screen.height,dpr=devicePixelRatio;
-  // 物理像素 = CSS像素 × DPR
   const pw=w*dpr, ph=h*dpr;
   const physDiag=Math.sqrt(pw*pw+ph*ph);
-  // 估算 PPI: 手机通常 350-500, 桌面 90-150
   const estPPI=isMobile()?420:110;
   const diagInch=physDiag/estPPI;
   const d={width:w,height:h,dpr,physPx:`${Math.round(pw)}x${Math.round(ph)}`,diagInch:diagInch.toFixed(1),estPPI};
-  // 手机: 4-7.5寸正常, <3或>10寸异常; 桌面: 10-35寸正常
   if(isMobile()&&(diagInch<3||diagInch>10)) report('屏幕物理尺寸','info',`~${diagInch.toFixed(1)}寸 (估算, PPI假设${estPPI})`,d);
   else report('屏幕物理尺寸','pass',`~${diagInch.toFixed(1)}寸 ${Math.round(pw)}x${Math.round(ph)}px`,d);
 });
 
 reg('深度指纹','Vibration API',async()=>{
-  // 真实手机有振动器, 模拟器通常没有
   const d={};
   if(!navigator.vibrate) {
     if(isMobile()) report('Vibration API','risk','移动端无振动 API',d);
     else report('Vibration API','pass','桌面端无需振动',d);
     return;
   }
-  // 尝试触发微振动 (1ms, 用户感知不到)
   try{const ok=navigator.vibrate(1);d.result=ok;
     report('Vibration API','pass',`vibrate(1)=${ok}`,d)}
   catch(e){report('Vibration API','info','调用异常',e.message)}
 });
 
 reg('深度指纹','Performance 计时',async()=>{
-  // 执行一段密集计算, 模拟器的 ARM 翻译层通常更慢
   const iterations=500000;
   const t0=performance.now();
   let x=0;for(let i=0;i<iterations;i++)x+=Math.sin(i)*Math.cos(i);
   const elapsed=performance.now()-t0;
   const d={iterations,elapsedMs:elapsed.toFixed(2),opsPerMs:Math.round(iterations/elapsed),dummy:x};
-  // 纯粹采集, 不做风险判定 (不同设备性能差异大)
   report('Performance 计时','info',`${elapsed.toFixed(0)}ms / ${(iterations/1000)}K ops (采集)`,d);
 });
 
 reg('深度指纹','平台架构验证',async()=>{
-  // navigator.platform + UA + GPU 三方交叉
   const pf=navigator.platform, ua=navigator.userAgent, gpu=deviceProfile.signals.gpu||'';
   const d={platform:pf,uaAndroid:/android/i.test(ua),gpu:gpu.substring(0,40)};
   const issues=[];
 
-  // x86 Android = 模拟器 (所有真实 Android 手机都是 ARM)
   if(/android/i.test(ua) && /i[36]86|x86_64/i.test(pf))
     issues.push('x86 平台运行 Android');
 
-  // ARM GPU 在 x86 = 翻译层
   if(/adreno|mali|powervr/i.test(gpu) && /i[36]86|x86_64/i.test(pf))
     issues.push('ARM GPU 在 x86 (翻译层)');
 
-  // Android UA 但 Windows/Mac 平台
   if(/android/i.test(ua) && /Win|Mac/.test(pf))
     issues.push('Android UA 但桌面平台');
 
@@ -1138,14 +1909,11 @@ reg('深度指纹','WebGL 扩展数量',async()=>{
   if(!gl) return report('WebGL 扩展数量','info','不可用',null);
   const exts=gl.getSupportedExtensions()||[];
   const d={count:exts.length,list:exts};
-  // 真机 GPU 通常 20+ 扩展, 软件渲染 <10
   if(exts.length<8&&isMobile()) report('WebGL 扩展数量','risk',`仅 ${exts.length} 扩展 (软件渲染?)`,d);
   else report('WebGL 扩展数量','pass',`${exts.length} 扩展`,d);
 });
 
 reg('深度指纹','纹理压缩扩展',async()=>{
-  // FingerprintJS: 桌面GPU支持S3TC/BPTC/RGTC, 移动GPU支持ETC/ASTC, 互不相同
-  // 硬件级信号, 无法通过JS伪装
   const cv=document.createElement('canvas'),gl=cv.getContext('webgl');
   if(!gl) return report('纹理压缩扩展','info','WebGL 不可用',null);
   const exts=gl.getSupportedExtensions()||[];
@@ -1164,14 +1932,11 @@ reg('深度指纹','纹理压缩扩展',async()=>{
 });
 
 reg('深度指纹','时间源精度',async()=>{
-  // 测量 Date.now() 和 performance.now() 的精度差异
-  // 模拟器和 Headless 的时间源行为不同
   const samples=[];
   for(let i=0;i<50;i++){const a=performance.now(),b=performance.now();if(b>a)samples.push(b-a)}
   const d={sampleCount:samples.length};
   if(samples.length===0){
     d.precision='无差异样本';
-    // 移动端浏览器为防 Spectre 降低精度是正常安全措施, 不是异常
     report('时间源精度','pass','精度已被浏览器安全策略限制 (正常)',d);
   }else{
     const min=Math.min(...samples),avg=samples.reduce((a,b)=>a+b,0)/samples.length;
@@ -1209,13 +1974,34 @@ reg('综合判定','云真机判定',async()=>{
 // ==================== 启动 ====================
 async function run(){
   done=0;lastVerdict=null;Object.keys(results).forEach(k=>delete results[k]);
-  document.getElementById('prog').style.width='0%';
-  document.getElementById('s-val').textContent='--';
-  document.getElementById('s-lbl').textContent='设备识别中...';
-  document.getElementById('s-arc').style.strokeDashoffset=364.4;
+  startTime = performance.now();
+
+  // 重置 UI
+  document.getElementById('scoreN').textContent = '--';
+  document.getElementById('vText').textContent = '检测中...';
+  document.getElementById('vText').style.color = '';
+  document.getElementById('scoreFormula').innerHTML = '';
+  document.getElementById('sPass').textContent = '0';
+  document.getElementById('sRisk').textContent = '0';
+  document.getElementById('sInfo').textContent = '0';
+  document.getElementById('iLabel').textContent = '准备检测...';
+  document.getElementById('iMeta').textContent = '';
+  document.getElementById('evRow').classList.remove('show');
+  document.getElementById('totalCount').textContent = '';
+
+  // Ring 重置
+  const ring = document.getElementById('ring');
+  ring.style.transition = 'none';
+  ring.style.strokeDashoffset = '226.2';
+  requestAnimationFrame(() => { ring.style.transition = ''; });
+
+  // Island dot 恢复动画
+  const dot = document.getElementById('iDot');
+  dot.style.background = 'var(--orange)';
+  dot.style.animation = '';
 
   // 阶段1: 设备画像
-  deviceProfile=identifyDevice();
+  deviceProfile = identifyDevice();
   renderProfile(deviceProfile);
 
   // 阶段2: 针对性检测
