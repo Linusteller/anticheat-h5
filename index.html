@@ -150,6 +150,12 @@ function updateScore() {
       // hover + fine pointer = 桌面行为, 移动端不应有
       const mm = results['matchMedia 特征']?.detail;
       if (mm && mm['hover'] && mm['pointer-fine'] && !mm['pointer-coarse']) mobileAnomalies++;
+      // 平台API三信号: 0/3移动信号 = 桌面环境
+      if (results['平台 API 三信号']?.status === 'risk') mobileAnomalies++;
+      // plugins: 移动端有插件 = 桌面伪装
+      if (results['navigator.plugins']?.status === 'risk') mobileAnomalies++;
+      // 纹理压缩: 移动端有桌面纹理格式 = 桌面GPU
+      if (results['纹理压缩扩展']?.status === 'risk') mobileAnomalies++;
     }
 
     // 异常信号上限: 多个硬件 API 缺失 = 伪装模拟器
@@ -455,6 +461,43 @@ reg('环境验证','媒体设备',async()=>{
   }catch(e){report('媒体设备','info','枚举失败',e.message)}
 });
 
+reg('环境验证','平台 API 三信号',async()=>{
+  // FingerprintJS isMobile 判断: 3个API在桌面和移动端存在性不同
+  // SharedWorker: 桌面有, 手机无
+  // connection.ontypechange: 手机有, 桌面无
+  // Audio.sinkId: 桌面有, 手机无
+  const d={};
+  d.hasSharedWorker='SharedWorker' in window;
+  d.hasOntypechange=!!(navigator.connection&&'ontypechange' in navigator.connection);
+  d.hasSinkId=(()=>{try{return 'sinkId' in new Audio()}catch(e){return false}})();
+  // 移动端信号: 无SharedWorker + 有ontypechange + 无sinkId
+  let mobileSignals=0;
+  if(!d.hasSharedWorker) mobileSignals++;
+  if(d.hasOntypechange) mobileSignals++;
+  if(!d.hasSinkId) mobileSignals++;
+  d.mobileSignals=mobileSignals;
+  d.claimedMobile=isMobile()||isAndroid();
+  if(d.claimedMobile&&mobileSignals<=0)
+    report('平台 API 三信号','risk',`声称移动端但0/3移动信号 (桌面环境)`,d);
+  else if(d.claimedMobile&&mobileSignals===1)
+    report('平台 API 三信号','risk',`仅1/3移动信号 (可疑)`,d);
+  else if(!d.claimedMobile&&mobileSignals>=3)
+    report('平台 API 三信号','info',`桌面端有3/3移动信号`,d);
+  else report('平台 API 三信号','pass',`${mobileSignals}/3 移动信号`,d);
+});
+
+reg('环境验证','navigator.plugins',async()=>{
+  // 手机浏览器 plugins 永远为空, 桌面有 PDF Viewer 等
+  const plugins=navigator.plugins;
+  const list=[];for(let i=0;i<plugins.length;i++)list.push(plugins[i].name);
+  const d={count:list.length,list};
+  if((isMobile()||isAndroid())&&list.length>0)
+    report('navigator.plugins','risk',`移动端有${list.length}个插件: ${list.join(',')} (桌面伪装)`,d);
+  else if(isPC()&&list.length===0)
+    report('navigator.plugins','info','桌面端无插件',d);
+  else report('navigator.plugins','pass',`${list.length}个插件`,d);
+});
+
 // ---- 指纹采集 ----
 
 reg('指纹采集','Canvas 指纹',async()=>{
@@ -743,6 +786,49 @@ reg('行为分析','FP/FCP/LCP',async()=>{
   });
 });
 
+reg('行为分析','触摸事件真实性',async()=>{
+  // 真机触摸有force/radiusX/radiusY变化, 模拟器通常全为0或固定值
+  if(!isMobile()&&!isAndroid()) return report('触摸事件真实性','info','非移动端 (跳过)',{skip:true});
+  return new Promise(rv=>{
+    const samples=[];let reported=false;
+    const h=e=>{
+      for(let i=0;i<e.touches.length;i++){
+        const t=e.touches[i];
+        samples.push({force:t.force,rx:t.radiusX,ry:t.radiusY,x:Math.round(t.clientX),y:Math.round(t.clientY)});
+      }
+      if(samples.length>=3&&!reported){
+        reported=true;document.removeEventListener('touchstart',h);document.removeEventListener('touchmove',hm);
+        const d={samples:samples.slice(0,10)};
+        const allZeroForce=samples.every(s=>s.force===0);
+        const allSameRadius=samples.length>1&&samples.every(s=>s.rx===samples[0].rx&&s.ry===samples[0].ry);
+        d.allZeroForce=allZeroForce;d.allSameRadius=allSameRadius;
+        if(allZeroForce&&allSameRadius)
+          report('触摸事件真实性','risk','force=0 + 半径固定 (模拟触摸)',d);
+        else if(allZeroForce)
+          report('触摸事件真实性','info','force全为0 (部分浏览器正常)',d);
+        else report('触摸事件真实性','pass',`force/radius有变化 (真实触摸)`,d);
+        rv();
+      }
+    };
+    const hm=e=>{h(e)};
+    document.addEventListener('touchstart',h,{passive:true});
+    document.addEventListener('touchmove',hm,{passive:true});
+    setTimeout(()=>{
+      if(!reported){
+        reported=true;document.removeEventListener('touchstart',h);document.removeEventListener('touchmove',hm);
+        if(samples.length===0) report('触摸事件真实性','info','3秒内无触摸 (需交互)',{timeout:true});
+        else{
+          const d={samples:samples.slice(0,10),allZeroForce:samples.every(s=>s.force===0),
+            allSameRadius:samples.length>1&&samples.every(s=>s.rx===samples[0].rx&&s.ry===samples[0].ry)};
+          if(d.allZeroForce&&d.allSameRadius) report('触摸事件真实性','risk','force=0+半径固定',d);
+          else report('触摸事件真实性','pass','触摸数据正常',d);
+        }
+        rv();
+      }
+    },3000);
+  });
+});
+
 // ---- v8 新增检测 (来源: WPK H5 v8 CDP 实测报告) ----
 
 reg('v8 新增','eval 锁定检测',async()=>{
@@ -993,6 +1079,26 @@ reg('深度指纹','WebGL 扩展数量',async()=>{
   // 真机 GPU 通常 20+ 扩展, 软件渲染 <10
   if(exts.length<8&&isMobile()) report('WebGL 扩展数量','risk',`仅 ${exts.length} 扩展 (软件渲染?)`,d);
   else report('WebGL 扩展数量','pass',`${exts.length} 扩展`,d);
+});
+
+reg('深度指纹','纹理压缩扩展',async()=>{
+  // FingerprintJS: 桌面GPU支持S3TC/BPTC/RGTC, 移动GPU支持ETC/ASTC, 互不相同
+  // 硬件级信号, 无法通过JS伪装
+  const cv=document.createElement('canvas'),gl=cv.getContext('webgl');
+  if(!gl) return report('纹理压缩扩展','info','WebGL 不可用',null);
+  const exts=gl.getSupportedExtensions()||[];
+  const desktop=['WEBGL_compressed_texture_s3tc','EXT_texture_compression_bptc','EXT_texture_compression_rgtc',
+    'WEBGL_compressed_texture_s3tc_srgb'];
+  const mobile=['WEBGL_compressed_texture_etc','WEBGL_compressed_texture_etc1','WEBGL_compressed_texture_astc',
+    'WEBGL_compressed_texture_pvrtc'];
+  const hasDesktop=desktop.filter(e=>exts.includes(e));
+  const hasMobile=mobile.filter(e=>exts.includes(e));
+  const d={desktopFormats:hasDesktop,mobileFormats:hasMobile,claimedMobile:isMobile()||isAndroid()};
+  if(d.claimedMobile&&hasDesktop.length>0&&hasMobile.length===0)
+    report('纹理压缩扩展','risk',`移动端有桌面纹理格式(${hasDesktop.join(',')}) 无移动格式 (模拟器)`,d);
+  else if(isPC()&&hasMobile.length>0&&hasDesktop.length===0)
+    report('纹理压缩扩展','info',`桌面端有移动纹理格式`,d);
+  else report('纹理压缩扩展','pass',`桌面${hasDesktop.length} 移动${hasMobile.length}`,d);
 });
 
 reg('深度指纹','时间源精度',async()=>{
