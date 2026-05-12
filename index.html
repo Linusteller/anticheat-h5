@@ -133,21 +133,50 @@ function updateScore() {
   document.getElementById('s-val').textContent = score;
   document.getElementById('s-val').style.color = arc.style.stroke;
   if (done >= checks.length) {
-    // 最终判定: 设备画像 + 检测通过率 联合决策
+    // 最终判定: 设备画像 + 检测通过率 + 移动端组合异常 联合决策
     const profileType = deviceProfile?.type || 'unknown';
     const emuConf = deviceProfile?.scores?.['模拟器'] || 0;
     const cloudConf = deviceProfile?.scores?.['云真机'] || 0;
     const isSafeType = profileType==='iPhone'||profileType==='Android'||profileType==='PC';
 
+    // 移动端组合异常信号: Android 设备缺少多个硬件 API = 模拟器高度可疑
+    let mobileAnomalies = 0;
+    if (profileType === 'Android' || (isSafeType && /android/i.test(navigator.userAgent))) {
+      if (results['电池状态']?.status === 'risk' || (!navigator.getBattery && /android/i.test(navigator.userAgent))) mobileAnomalies++;
+      if (results['传感器']?.status === 'risk') mobileAnomalies++;
+      if (results['DeviceMotion']?.status === 'risk') mobileAnomalies++;
+      if (results['媒体设备']?.status === 'risk') mobileAnomalies++;
+      if (results['Vibration API']?.status === 'risk') mobileAnomalies++;
+      // hover + fine pointer = 桌面行为, 移动端不应有
+      const mm = results['matchMedia 特征']?.detail;
+      if (mm && mm['hover'] && mm['pointer-fine'] && !mm['pointer-coarse']) mobileAnomalies++;
+    }
+
+    // 异常信号上限: 多个硬件 API 缺失 = 伪装模拟器
+    let finalScore = score;
+    if (mobileAnomalies >= 5) finalScore = Math.min(finalScore, 15);
+    else if (mobileAnomalies >= 4) finalScore = Math.min(finalScore, 30);
+    else if (mobileAnomalies >= 3) finalScore = Math.min(finalScore, 49);
+
+    // 如果被限制，更新显示
+    if (finalScore !== score) {
+      arc.style.strokeDashoffset = 364.4 * (1 - finalScore / 100);
+      arc.style.stroke = finalScore >= 80 ? 'var(--green)' : finalScore >= 50 ? 'var(--yellow)' : 'var(--red)';
+      document.getElementById('s-val').textContent = finalScore;
+      document.getElementById('s-val').style.color = arc.style.stroke;
+    }
+
     let verdict, verdictColor;
     if (!isSafeType && (emuConf >= 50 || cloudConf >= 50)) {
-      // 画像高置信度识别为模拟器/云真机 → 无论通过率多高都标风险
       verdict = `${profileType} (置信度${Math.max(emuConf,cloudConf)}%)`;
       verdictColor = emuConf>=70||cloudConf>=70 ? 'var(--red)' : 'var(--yellow)';
-    } else if (score >= 80 && isSafeType) {
+    } else if (mobileAnomalies >= 3) {
+      verdict = `高风险设备 (${mobileAnomalies}项移动端异常)`;
+      verdictColor = 'var(--red)';
+    } else if (finalScore >= 80 && isSafeType && riskC <= 2) {
       verdict = '设备安全';
       verdictColor = 'var(--green)';
-    } else if (score >= 50) {
+    } else if (finalScore >= 50) {
       verdict = '存在风险';
       verdictColor = 'var(--yellow)';
     } else {
@@ -357,7 +386,7 @@ reg('环境验证','电池状态',async()=>{
 reg('环境验证','传感器',async()=>{
   if(isPC()) return report('传感器','info','桌面端无需传感器 (跳过)',{skip:true});
   if(isIOS()){
-    const has=typeof DeviceMotionEvent?.requestPermission==='function';
+    const has=typeof window.DeviceMotionEvent!=='undefined'&&typeof window.DeviceMotionEvent.requestPermission==='function';
     return report('传感器',has?'pass':'info',has?'iOS DeviceMotion API 可用':'iOS 传感器需用户授权',{iosPermission:has});
   }
   // Android / 模拟器: 检查 Generic Sensor API
@@ -379,7 +408,7 @@ reg('环境验证','传感器',async()=>{
 
 reg('环境验证','DeviceMotion',async()=>{
   if(isPC()) return report('DeviceMotion','info','桌面端无需运动传感器 (跳过)',{skip:true});
-  if(isIOS()&&typeof DeviceMotionEvent?.requestPermission==='function')
+  if(isIOS()&&typeof window.DeviceMotionEvent!=='undefined'&&typeof window.DeviceMotionEvent.requestPermission==='function')
     return report('DeviceMotion','pass','iOS 需用户手势授权 (正常)',{ios:true});
   return new Promise(rv=>{
     let got=false;
@@ -544,7 +573,8 @@ reg('工具检测','端口扫描 (WPK)',async()=>{
     const t=setTimeout(()=>{ws.close();rv(false)},1200);ws.onopen=()=>{clearTimeout(t);ws.close();rv(true)};
     ws.onerror=()=>{clearTimeout(t);rv(false)}}catch(e){rv(false)}});
   const ports=[7125,7126,27042,27043,5555,9222,8080,8888];
-  const open=[];for(const p of ports)if(await scan(p))open.push(p);
+  const states=await Promise.all(ports.map(async p=>[p,await scan(p)]));
+  const open=states.filter(([,ok])=>ok).map(([p])=>p);
   const d={scanned:ports,open};
   const frida=open.some(p=>[27042,27043].includes(p));
   const wpk=open.some(p=>[7125,7126].includes(p));
@@ -825,6 +855,8 @@ reg('v8 新增','matchMedia 特征',async()=>{
   // Headless Chrome 通常没有 hover 和 pointer
   if(!queries['hover']&&!queries['pointer-fine']&&!queries['pointer-coarse'])
     report('matchMedia 特征','risk','无 hover/pointer 能力 (Headless?)',d);
+  else if(isMobile()&&queries['hover']&&queries['pointer-fine']&&!queries['pointer-coarse'])
+    report('matchMedia 特征','risk','移动端有 hover+fine pointer 无 coarse (桌面环境伪装)',d);
   else{
     const summary=[];
     if(queries['color-gamut-p3']) summary.push('P3色域');
