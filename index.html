@@ -233,13 +233,45 @@ function identifyDevice() {
 
   // 云真机信号 (后续阶段2补充)
 
-  const scores = {iPhone:pIPhone, Android:pAndroid, PC:pPC, '模拟器':pEmu, '云真机':pCloud};
-  const total = Math.max(1, Object.values(scores).reduce((a,b)=>a+b,0));
-  const best = Object.entries(scores).sort((a,b)=>b[1]-a[1]);
-  s.type = best[0][1]>0 ? best[0][0] : 'unknown';
-  s.confidence = Math.round(best[0][1]/total*100);
-  s.scores = {};
-  for (const [k,v] of Object.entries(scores)) s.scores[k] = Math.round(v/total*100);
+  // === 硬证据短路: 确定性信号直接判定, 不走加权 ===
+  s.hardEvidence = [];
+
+  // x86/x86_64 平台 + Android UA = 100% 模拟器 (没有任何真实手机是 x86)
+  if (/android/i.test(ua) && /i[36]86|x86_64/i.test(pf)) {
+    s.hardEvidence.push('x86平台运行Android');
+    // 细分模拟器品牌
+    if (/i686/i.test(pf) && s.signals.cores<=4 && s.signals.memory<=4)
+      s.hardEvidence.push('特征匹配:雷电模拟器');
+  }
+
+  // 软件渲染 GPU = 100% 虚拟环境
+  if (s.signals.isSoftGPU) s.hardEvidence.push('软件渲染GPU(SwiftShader/llvmpipe)');
+
+  // Android UA + Windows/Mac 平台 = 100% 模拟器
+  if (/android/i.test(ua) && /Win|Mac/.test(pf) && !(/MacIntel/.test(pf)&&s.signals.maxTouch>1))
+    s.hardEvidence.push('Android UA但桌面操作系统');
+
+  // ARM GPU 在 x86 平台 = 翻译层
+  if (s.signals.isMobileGPU && !s.signals.isAppleGPU && /i[36]86|x86_64/i.test(pf))
+    s.hardEvidence.push('ARM GPU通过x86翻译层运行');
+
+  if (s.hardEvidence.length > 0) {
+    // 硬证据存在: 直接判定模拟器 100%
+    s.type = '模拟器';
+    s.confidence = 100;
+    s.scores = {iPhone:0, Android:0, PC:0, '模拟器':100, '云真机':0};
+    s.reason = s.hardEvidence.join(' + ');
+  } else {
+    // 无硬证据: 走加权评分
+    const scores = {iPhone:pIPhone, Android:pAndroid, PC:pPC, '模拟器':pEmu, '云真机':pCloud};
+    const total = Math.max(1, Object.values(scores).reduce((a,b)=>a+b,0));
+    const best = Object.entries(scores).sort((a,b)=>b[1]-a[1]);
+    s.type = best[0][1]>0 ? best[0][0] : 'unknown';
+    s.confidence = Math.round(best[0][1]/total*100);
+    s.scores = {};
+    for (const [k,v] of Object.entries(scores)) s.scores[k] = Math.round(v/total*100);
+    s.reason = '加权评分';
+  }
 
   // 生成标签
   const gpu = s.signals.gpu;
@@ -257,8 +289,10 @@ function renderProfile(p) {
   const icons = {iPhone:'🍎',Android:'🤖',PC:'💻','模拟器':'⚠️','云真机':'☁️',unknown:'❓'};
   document.getElementById('pf-icon').textContent = icons[p.type]||'❓';
   document.getElementById('pf-type').textContent = p.type;
-  document.getElementById('pf-conf').textContent = `置信度 ${p.confidence}% | ` +
-    Object.entries(p.scores).map(([k,v])=>`${k}${v}%`).join(' ');
+  const confLine = p.hardEvidence?.length
+    ? `硬证据: ${p.reason}`
+    : `置信度 ${p.confidence}% | ` + Object.entries(p.scores).map(([k,v])=>`${k}${v}%`).join(' ');
+  document.getElementById('pf-conf').textContent = confLine;
   const tags = document.getElementById('pf-tags');
   tags.innerHTML = p.tags.map(t=>`<span class="tag">${t}</span>`).join('');
 }
