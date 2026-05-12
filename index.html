@@ -800,6 +800,235 @@ reg('行为分析', 'Storage 可用性', async () => {
     report('Storage 可用性', 'pass', '所有存储 API 可用', d);
 });
 
+// ---- 深度检测 (来源: FingerprintJS BotD + CreepJS + WPK H5 实测) ----
+
+reg('深度检测', 'WebView 环境检测', async () => {
+  // WPK H5 实际使用的 5 项 WebView 子检测
+  const d = {};
+  const ua = navigator.userAgent;
+  d.iosUA = /AppleWebKit/i.test(ua) && /Mobile/i.test(ua) && !/Safari/i.test(ua);
+  d.iosInjected = !!(window.webkit?.messageHandlers);
+  d.androidUA = /;\s*wv\b/i.test(ua) || /webview/i.test(ua);
+  d.androidInjected = !!(window.android || window.AndroidInterface || window.JSBridge || window.ReactNativeWebView || window.Flutter_inappwebview);
+  d.androidWebViewAPI = !!(window.chrome?.webview);
+  const hits = Object.entries(d).filter(([k, v]) => v).map(([k]) => k);
+  if (hits.length >= 2)
+    report('WebView 环境检测', 'risk', `WebView 特征: ${hits.join(', ')}`, d);
+  else if (hits.length === 1)
+    report('WebView 环境检测', 'warn', `可疑: ${hits[0]}`, d);
+  else
+    report('WebView 环境检测', 'pass', '非 WebView 环境', d);
+});
+
+reg('深度检测', 'Headless Chrome 深度检测', async () => {
+  // 来源: FingerprintJS BotD + CreepJS
+  const d = {};
+  const issues = [];
+
+  // 1. navigator.webdriver (最基础)
+  d.webdriver = navigator.webdriver;
+  if (navigator.webdriver === true) issues.push('webdriver=true');
+
+  // 2. window.chrome 对象 (真实 Chrome 有完整结构)
+  d.hasChrome = !!window.chrome;
+  d.hasChromeRuntime = !!window.chrome?.runtime;
+  d.hasChromeLoadTimes = !!window.chrome?.loadTimes;
+  d.hasChromeCSI = !!window.chrome?.csi;
+  if (!window.chrome && /chrome/i.test(navigator.userAgent))
+    issues.push('UA含Chrome但window.chrome不存在');
+
+  // 3. Permissions API 异常 (Headless 下 notification 直接 denied)
+  try {
+    const np = await navigator.permissions.query({ name: 'notifications' });
+    d.notifPerm = np.state;
+    if (np.state === 'denied' && Notification.permission === 'default')
+      issues.push('permissions.notifications=denied但Notification.permission=default');
+  } catch (e) { d.notifErr = e.message; }
+
+  // 4. 插件对象类型 (Headless Chrome 的 PluginArray.length=0 且类型可能异常)
+  d.pluginArrayType = Object.getPrototypeOf(navigator.plugins)?.constructor?.name;
+  if (d.pluginArrayType !== 'PluginArray') issues.push('plugins原型异常');
+
+  // 5. Connection rtt (Headless 通常 rtt=0)
+  const conn = navigator.connection;
+  if (conn && conn.rtt === 0) { d.rtt = 0; issues.push('connection.rtt=0'); }
+
+  // 6. outerWidth/outerHeight = 0 (Headless 特征)
+  if (window.outerWidth === 0 && window.outerHeight === 0)
+    issues.push('outerWidth/Height=0');
+  d.outerW = window.outerWidth; d.outerH = window.outerHeight;
+
+  // 7. Chrome DevTools Protocol 检测 (CDP 端口泄露)
+  d.hasCDCProps = Object.keys(window).some(k => k.startsWith('cdc_') || k.startsWith('$cdc_'));
+  if (d.hasCDCProps) issues.push('检测到 ChromeDriver 属性');
+
+  d.issues = issues;
+  if (issues.length >= 3) report('Headless Chrome 深度检测', 'risk', issues.join('; '), d);
+  else if (issues.length >= 1) report('Headless Chrome 深度检测', 'warn', issues.join('; '), d);
+  else report('Headless Chrome 深度检测', 'pass', 'Chrome 对象结构正常', d);
+});
+
+reg('深度检测', 'Chrome 版本新鲜度', async () => {
+  const ua = navigator.userAgent;
+  const m = ua.match(/Chrome\/(\d+)/);
+  if (!m) return report('Chrome 版本新鲜度', 'warn', '非 Chrome 浏览器', { ua });
+  const ver = parseInt(m[1]);
+  const d = { chromeVersion: ver, ua };
+  // 2026年5月的 Chrome 稳定版应在 145+ 左右
+  // MuMu 模拟器常用旧版 Chrome (110)
+  if (ver < 110) report('Chrome 版本新鲜度', 'risk', `Chrome ${ver} 严重过时 (模拟器常见)`, d);
+  else if (ver < 130) report('Chrome 版本新鲜度', 'warn', `Chrome ${ver} 版本较旧`, d);
+  else report('Chrome 版本新鲜度', 'pass', `Chrome ${ver}`, d);
+});
+
+reg('深度检测', 'GPU vs Platform 交叉验证', async () => {
+  // 来源: CreepJS lie detection — 跨属性一致性验证
+  const c = document.createElement('canvas');
+  const gl = c.getContext('webgl');
+  if (!gl) return report('GPU vs Platform 交叉验证', 'warn', 'WebGL 不可用', null);
+  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  const renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : '';
+  const pf = navigator.platform;
+  const ua = navigator.userAgent;
+  const d = { renderer, platform: pf, ua: ua.substring(0, 80) };
+  const issues = [];
+
+  // Adreno/Mali (手机 GPU) 但 platform 是 Windows/Mac
+  if (/adreno|mali|powervr/i.test(renderer) && /Win|Mac/i.test(pf))
+    issues.push(`手机GPU(${renderer.substring(0,20)})在桌面平台(${pf})`);
+  // NVIDIA/AMD/Intel (桌面 GPU) 但 UA 声称 Android
+  if (/nvidia|geforce|radeon|intel.*iris/i.test(renderer) && /android/i.test(ua) && !/linux/i.test(pf))
+    issues.push('桌面GPU但声称Android');
+  // SwiftShader (软件渲染) 但声称有真实 GPU 的设备
+  if (/swiftshader/i.test(renderer))
+    issues.push('SwiftShader 软件渲染');
+
+  d.issues = issues;
+  if (issues.length) report('GPU vs Platform 交叉验证', 'risk', issues.join('; '), d);
+  else report('GPU vs Platform 交叉验证', 'pass', `${renderer.substring(0, 40)} | ${pf}`, d);
+});
+
+reg('深度检测', '多开/多标签检测', async () => {
+  // 对应 WPK 的 mulTableReport 多桌上报
+  return new Promise(resolve => {
+    const d = { supported: false, otherTabDetected: false };
+    try {
+      const channel = new BroadcastChannel('anticheat_tab_detect');
+      d.supported = true;
+      let detected = false;
+      channel.onmessage = (e) => {
+        if (e.data === 'ping') { detected = true; channel.postMessage('pong'); }
+        if (e.data === 'pong') { detected = true; }
+      };
+      channel.postMessage('ping');
+      setTimeout(() => {
+        channel.close();
+        d.otherTabDetected = detected;
+        if (detected)
+          report('多开/多标签检测', 'warn', '检测到其他标签页打开了相同页面', d);
+        else
+          report('多开/多标签检测', 'pass', '未检测到多开', d);
+        resolve();
+      }, 1000);
+    } catch (e) {
+      report('多开/多标签检测', 'warn', 'BroadcastChannel 不可用', d);
+      resolve();
+    }
+  });
+});
+
+reg('深度检测', '字体指纹', async () => {
+  // 来源: CreepJS / FingerprintJS — 不同 OS/设备的字体列表差异大
+  const testFonts = [
+    'Arial', 'Verdana', 'Times New Roman', 'Courier New', 'Georgia',
+    'Comic Sans MS', 'Impact', 'Trebuchet MS', 'Lucida Console',
+    'Microsoft YaHei', 'SimHei', 'SimSun', 'NSimSun', 'KaiTi',
+    'Segoe UI', 'Calibri', 'Consolas', 'Cambria',
+    'Roboto', 'Droid Sans', 'Noto Sans CJK',
+    'Helvetica Neue', 'San Francisco', 'PingFang SC',
+    'Ubuntu', 'DejaVu Sans', 'Liberation Sans'
+  ];
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const baseline = 'monospace';
+  const testStr = 'mmMwWLlI10Oo!@#$中文测试';
+  ctx.font = `72px ${baseline}`;
+  const baseW = ctx.measureText(testStr).width;
+  const available = [];
+  for (const f of testFonts) {
+    ctx.font = `72px "${f}", ${baseline}`;
+    const w = ctx.measureText(testStr).width;
+    if (w !== baseW) available.push(f);
+  }
+  const d = { total: testFonts.length, available: available.length, fonts: available };
+  // 极少字体 = Headless/最小化环境
+  if (available.length <= 3)
+    report('字体指纹', 'risk', `仅 ${available.length}/${testFonts.length} 字体 (Headless?)`, d);
+  else if (available.length <= 8)
+    report('字体指纹', 'warn', `${available.length}/${testFonts.length} 字体 (较少)`, d);
+  else
+    report('字体指纹', 'pass', `${available.length}/${testFonts.length} 字体可用`, d);
+});
+
+reg('深度检测', '连接类型 vs UA 交叉验证', async () => {
+  const conn = navigator.connection || navigator.mozConnection;
+  if (!conn) return report('连接类型 vs UA 交叉验证', 'warn', 'Network API 不可用', null);
+  const ua = navigator.userAgent;
+  const d = { type: conn.type, effectiveType: conn.effectiveType, ua: ua.substring(0, 60) };
+  const issues = [];
+  // 声称 Android/移动端 但连接类型是 ethernet
+  if (/android|mobile/i.test(ua) && conn.type === 'ethernet')
+    issues.push('移动UA但以太网连接');
+  // downlink 异常高 (>100Mbps) 但声称移动网络
+  if (conn.effectiveType === '4g' && conn.downlink > 100 && /android/i.test(ua))
+    issues.push(`移动端但带宽${conn.downlink}Mbps异常高`);
+  d.issues = issues;
+  if (issues.length) report('连接类型 vs UA 交叉验证', 'warn', issues.join('; '), d);
+  else report('连接类型 vs UA 交叉验证', 'pass', `${conn.type || conn.effectiveType}`, d);
+});
+
+reg('深度检测', '属性一致性校验 (Lie Detection)', async () => {
+  // 来源: CreepJS 核心思想 — 检测浏览器是否在"说谎"
+  const d = {};
+  const lies = [];
+
+  // 1. platform vs UA 深度交叉
+  const ua = navigator.userAgent;
+  const pf = navigator.platform;
+  if (/android/i.test(ua) && /Win/i.test(pf)) lies.push('UA=Android + platform=Win');
+  if (/iphone/i.test(ua) && !/iPhone/i.test(pf)) lies.push('UA=iPhone + platform≠iPhone');
+  if (/x86_64|x86|Win64/i.test(ua) && /arm/i.test(pf)) lies.push('UA=x86 + platform=ARM');
+
+  // 2. deviceMemory vs hardwareConcurrency
+  const mem = navigator.deviceMemory;
+  const cores = navigator.hardwareConcurrency;
+  if (mem && cores) {
+    if (mem >= 8 && cores <= 1) lies.push(`内存${mem}GB但仅${cores}核`);
+    if (mem <= 0.5 && cores >= 8) lies.push(`内存${mem}GB但${cores}核`);
+  }
+  d.memory = mem; d.cores = cores;
+
+  // 3. touchPoints vs platform
+  const tp = navigator.maxTouchPoints;
+  if (tp > 0 && /Win.*x64|MacIntel/.test(pf) && !/touch/i.test(ua))
+    d.touchOnDesktop = true; // Windows touch 笔记本是正常的，仅记录不报风险
+
+  // 4. screen vs devicePixelRatio 一致性
+  const sw = screen.width, sh = screen.height;
+  const iw = window.innerWidth;
+  const dpr = window.devicePixelRatio;
+  if (dpr > 1 && sw < 300) lies.push(`DPR=${dpr}但屏幕仅${sw}px`);
+
+  // 5. language vs languages 一致性
+  if (navigator.languages?.length > 0 && !navigator.languages.includes(navigator.language))
+    lies.push('language不在languages列表中');
+
+  d.lies = lies;
+  if (lies.length >= 2) report('属性一致性校验 (Lie Detection)', 'risk', lies.join('; '), d);
+  else if (lies.length === 1) report('属性一致性校验 (Lie Detection)', 'warn', lies[0], d);
+  else report('属性一致性校验 (Lie Detection)', 'pass', '属性一致，无矛盾', d);
+});
+
 // ---- H5 专项检测 (来源: WPK H5 版本风控分析) ----
 
 reg('H5 专项检测', '媒体设备枚举', async () => {
