@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Anti-Cheat Detector</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #0a0e17; --card: #131a2b; --card-hover: #1a2340;
+  --green: #00e676; --red: #ff5252; --yellow: #ffd740; --blue: #448aff;
+  --text: #e0e0e0; --text2: #8892a4; --border: #1e2a42;
+}
+body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 16px; }
+.header { text-align: center; padding: 24px 0 16px; }
+.header h1 { font-size: 22px; font-weight: 700; letter-spacing: 1px; }
+.header p { color: var(--text2); font-size: 13px; margin-top: 6px; }
+
+/* 综合评分环 */
+.score-ring { display: flex; justify-content: center; align-items: center; margin: 20px auto; position: relative; width: 160px; height: 160px; }
+.score-ring svg { transform: rotate(-90deg); }
+.score-ring .bg-circle { fill: none; stroke: var(--border); stroke-width: 10; }
+.score-ring .fg-circle { fill: none; stroke-width: 10; stroke-linecap: round; transition: stroke-dashoffset 1s ease, stroke 0.5s; }
+.score-val { position: absolute; font-size: 42px; font-weight: 800; }
+.score-label { text-align: center; font-size: 13px; color: var(--text2); margin-top: -4px; }
+
+/* 统计栏 */
+.stats { display: flex; justify-content: center; gap: 24px; margin: 16px 0 20px; }
+.stat { text-align: center; }
+.stat-num { font-size: 22px; font-weight: 700; }
+.stat-lbl { font-size: 11px; color: var(--text2); margin-top: 2px; }
+.stat-num.g { color: var(--green); } .stat-num.r { color: var(--red); } .stat-num.y { color: var(--yellow); }
+
+/* 分类标签 */
+.category { margin: 20px 0 8px; padding: 0 4px; display: flex; align-items: center; gap: 8px; }
+.category-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--blue); }
+.category-name { font-size: 14px; font-weight: 600; color: var(--blue); }
+
+/* 检测卡片 */
+.cards { display: grid; gap: 8px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; cursor: pointer; transition: background 0.2s; }
+.card:hover { background: var(--card-hover); }
+.card-top { display: flex; justify-content: space-between; align-items: center; }
+.card-name { font-size: 14px; font-weight: 500; }
+.card-badge { font-size: 11px; padding: 2px 10px; border-radius: 20px; font-weight: 600; }
+.badge-pass { background: rgba(0,230,118,0.15); color: var(--green); }
+.badge-risk { background: rgba(255,82,82,0.15); color: var(--red); }
+.badge-warn { background: rgba(255,215,64,0.15); color: var(--yellow); }
+.badge-wait { background: rgba(255,255,255,0.08); color: var(--text2); }
+.card-detail { font-size: 12px; color: var(--text2); margin-top: 8px; display: none; word-break: break-all; line-height: 1.6; white-space: pre-wrap; }
+.card.open .card-detail { display: block; }
+.card-summary { font-size: 12px; color: var(--text2); margin-top: 4px; }
+
+/* 底部按钮 */
+.actions { display: flex; gap: 10px; margin: 24px 0; justify-content: center; }
+.btn { padding: 10px 24px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--text); font-size: 13px; cursor: pointer; transition: background 0.2s; }
+.btn:hover { background: var(--card-hover); }
+.btn-primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+.btn-primary:hover { opacity: 0.9; }
+
+/* 进度条 */
+.progress-bar { height: 3px; background: var(--border); border-radius: 2px; margin: 12px 0; overflow: hidden; }
+.progress-fill { height: 100%; background: var(--blue); border-radius: 2px; transition: width 0.3s; width: 0%; }
+
+@media (min-width: 600px) {
+  body { max-width: 640px; margin: 0 auto; padding: 24px; }
+  .cards { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Anti-Cheat Detector</h1>
+  <p>WPK 反作弊检测方案 H5 复现 &mdash; <span id="total-count">0</span> 项检测</p>
+</div>
+
+<div class="progress-bar"><div class="progress-fill" id="progress"></div></div>
+
+<div class="score-ring">
+  <svg width="160" height="160" viewBox="0 0 160 160">
+    <circle class="bg-circle" cx="80" cy="80" r="68"/>
+    <circle class="fg-circle" id="score-arc" cx="80" cy="80" r="68" stroke-dasharray="427.3" stroke-dashoffset="427.3"/>
+  </svg>
+  <div class="score-val" id="score-val">--</div>
+</div>
+<div class="score-label" id="score-label">检测中...</div>
+
+<div class="stats">
+  <div class="stat"><div class="stat-num g" id="s-pass">0</div><div class="stat-lbl">通过</div></div>
+  <div class="stat"><div class="stat-num r" id="s-risk">0</div><div class="stat-lbl">风险</div></div>
+  <div class="stat"><div class="stat-num y" id="s-warn">0</div><div class="stat-lbl">警告</div></div>
+</div>
+
+<div id="results"></div>
+
+<div class="actions">
+  <button class="btn" onclick="rerun()">重新检测</button>
+  <button class="btn btn-primary" onclick="exportJSON()">导出 JSON</button>
+</div>
+
+<script>
+// ========== 检测框架 ==========
+const checks = [];
+const results = {};
+let doneCount = 0;
+
+function reg(category, name, fn) { checks.push({ category, name, fn }); }
+
+function report(name, status, summary, detail) {
+  results[name] = { status, summary, detail, ts: Date.now() };
+  doneCount++;
+  renderCard(name);
+  updateScore();
+  document.getElementById('progress').style.width = (doneCount / checks.length * 100) + '%';
+}
+
+// status: 'pass' | 'risk' | 'warn'
+const STATUS_LABEL = { pass: '通过', risk: '风险', warn: '警告', wait: '检测中' };
+
+function renderCard(name) {
+  const el = document.getElementById('card-' + hashName(name));
+  if (!el) return;
+  const r = results[name];
+  const badge = el.querySelector('.card-badge');
+  badge.className = 'card-badge badge-' + r.status;
+  badge.textContent = STATUS_LABEL[r.status];
+  el.querySelector('.card-summary').textContent = r.summary;
+  el.querySelector('.card-detail').textContent = typeof r.detail === 'object' ? JSON.stringify(r.detail, null, 2) : String(r.detail || '');
+}
+
+function hashName(n) { let h = 0; for (let i = 0; i < n.length; i++) h = ((h << 5) - h + n.charCodeAt(i)) | 0; return Math.abs(h); }
+
+function updateScore() {
+  const vals = Object.values(results);
+  if (!vals.length) return;
+  const total = vals.length;
+  const passC = vals.filter(v => v.status === 'pass').length;
+  const riskC = vals.filter(v => v.status === 'risk').length;
+  const warnC = vals.filter(v => v.status === 'warn').length;
+  document.getElementById('s-pass').textContent = passC;
+  document.getElementById('s-risk').textContent = riskC;
+  document.getElementById('s-warn').textContent = warnC;
+
+  const score = Math.round((passC * 100 + warnC * 50) / doneCount);
+  const arc = document.getElementById('score-arc');
+  const offset = 427.3 * (1 - score / 100);
+  arc.style.strokeDashoffset = offset;
+  arc.style.stroke = score >= 80 ? 'var(--green)' : score >= 50 ? 'var(--yellow)' : 'var(--red)';
+  document.getElementById('score-val').textContent = score;
+  document.getElementById('score-val').style.color = score >= 80 ? 'var(--green)' : score >= 50 ? 'var(--yellow)' : 'var(--red)';
+
+  if (doneCount >= checks.length) {
+    document.getElementById('score-label').textContent =
+      score >= 80 ? '设备安全' : score >= 50 ? '存在风险' : '高风险设备';
+  }
+}
+
+function buildUI() {
+  const container = document.getElementById('results');
+  container.innerHTML = '';
+  document.getElementById('total-count').textContent = checks.length;
+  let lastCat = '';
+  checks.forEach(c => {
+    if (c.category !== lastCat) {
+      lastCat = c.category;
+      container.innerHTML += `<div class="category"><div class="category-dot"></div><div class="category-name">${c.category}</div></div>`;
+    }
+    const id = hashName(c.name);
+    container.innerHTML += `
+      <div class="card" id="card-${id}" onclick="this.classList.toggle('open')">
+        <div class="card-top">
+          <span class="card-name">${c.name}</span>
+          <span class="card-badge badge-wait">检测中</span>
+        </div>
+        <div class="card-summary" style="color:var(--text2);font-size:12px;margin-top:4px;">...</div>
+        <div class="card-detail"></div>
+      </div>`;
+  });
+}
+
+async function runAll() {
+  doneCount = 0;
+  Object.keys(results).forEach(k => delete results[k]);
+  document.getElementById('progress').style.width = '0%';
+  document.getElementById('score-val').textContent = '--';
+  document.getElementById('score-label').textContent = '检测中...';
+  document.getElementById('score-arc').style.strokeDashoffset = 427.3;
+  buildUI();
+  for (const c of checks) {
+    try { await c.fn(); } catch (e) { report(c.name, 'warn', '检测异常: ' + e.message, e.stack); }
+  }
+}
+
+function rerun() { runAll(); }
+
+function exportJSON() {
+  const data = { timestamp: new Date().toISOString(), userAgent: navigator.userAgent, results };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'anticheat-report-' + Date.now() + '.json';
+  a.click();
+}
+
+// ========== 检测实现 ==========
+
+// ---- 模拟器检测 ----
+
+reg('模拟器检测', 'WebGL 渲染器', async () => {
+  const c = document.createElement('canvas');
+  const gl = c.getContext('webgl') || c.getContext('experimental-webgl');
+  if (!gl) return report('WebGL 渲染器', 'warn', 'WebGL 不可用', null);
+  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  const vendor = dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR);
+  const renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+  const emuKeywords = ['swiftshader', 'llvmpipe', 'softpipe', 'virtualbox', 'vmware', 'mesa', 'microsoft basic', 'chromium', 'google', 'android emulator', 'bluestacks', 'nox', 'genymotion', 'goldfish'];
+  const lc = (vendor + ' ' + renderer).toLowerCase();
+  const hit = emuKeywords.find(k => lc.includes(k));
+  if (hit) report('WebGL 渲染器', 'risk', `检测到模拟器特征: ${hit}`, { vendor, renderer });
+  else report('WebGL 渲染器', 'pass', renderer.substring(0, 50), { vendor, renderer });
+});
+
+reg('模拟器检测', '电池状态', async () => {
+  if (!navigator.getBattery) return report('电池状态', 'warn', 'Battery API 不可用', null);
+  const b = await navigator.getBattery();
+  const detail = { level: b.level, charging: b.charging, chargingTime: b.chargingTime, dischargingTime: b.dischargingTime };
+  // 模拟器特征: 永远100%+充电, 或 chargingTime=0
+  if (b.level === 1 && b.charging && b.chargingTime === 0)
+    report('电池状态', 'risk', '电量100%+永远充电 (模拟器特征)', detail);
+  else if (b.level === 1 && b.charging)
+    report('电池状态', 'warn', '满电+充电中', detail);
+  else
+    report('电池状态', 'pass', `电量${Math.round(b.level*100)}% ${b.charging ? '充电中' : '未充电'}`, detail);
+});
+
+reg('模拟器检测', '传感器检测', async () => {
+  const sensors = {};
+  let missing = 0;
+  const check = (name, Cls) => new Promise(resolve => {
+    try {
+      if (!Cls) { sensors[name] = 'API不存在'; missing++; resolve(); return; }
+      const s = new Cls({ frequency: 10 });
+      let got = false;
+      s.addEventListener('reading', () => { if (!got) { got = true; sensors[name] = '可用'; s.stop(); resolve(); } });
+      s.addEventListener('error', (e) => { sensors[name] = '错误:' + e.error.message; missing++; s.stop(); resolve(); });
+      s.start();
+      setTimeout(() => { if (!got) { sensors[name] = '无数据'; missing++; s.stop(); resolve(); } }, 1500);
+    } catch (e) { sensors[name] = '不支持'; missing++; resolve(); }
+  });
+  await Promise.all([
+    check('加速度计', window.Accelerometer),
+    check('陀螺仪', window.Gyroscope),
+    check('磁力计', window.Magnetometer),
+  ]);
+  if (missing >= 3) report('传感器检测', 'risk', '无任何传感器 (模拟器特征)', sensors);
+  else if (missing >= 2) report('传感器检测', 'warn', `${missing}/3 传感器缺失`, sensors);
+  else report('传感器检测', 'pass', `${3-missing}/3 传感器可用`, sensors);
+});
+
+reg('模拟器检测', 'DeviceMotion 事件', async () => {
+  return new Promise(resolve => {
+    let received = false;
+    const handler = (e) => {
+      received = true;
+      window.removeEventListener('devicemotion', handler);
+      const a = e.accelerationIncludingGravity || {};
+      if (a.x === null && a.y === null && a.z === null)
+        report('DeviceMotion 事件', 'risk', '加速度全为null (模拟器)', { x: a.x, y: a.y, z: a.z });
+      else if (a.x === 0 && a.y === 0 && a.z === 0)
+        report('DeviceMotion 事件', 'warn', '加速度全为0', { x: a.x, y: a.y, z: a.z });
+      else
+        report('DeviceMotion 事件', 'pass', `加速度 x=${a.x?.toFixed(2)} y=${a.y?.toFixed(2)} z=${a.z?.toFixed(2)}`, { x: a.x, y: a.y, z: a.z });
+      resolve();
+    };
+    window.addEventListener('devicemotion', handler);
+    setTimeout(() => {
+      if (!received) {
+        window.removeEventListener('devicemotion', handler);
+        report('DeviceMotion 事件', 'risk', '2秒内无 devicemotion 事件 (可能是模拟器/桌面)', null);
+        resolve();
+      }
+    }, 2000);
+  });
+});
+
+reg('模拟器检测', '屏幕特征', async () => {
+  const d = {
+    width: screen.width, height: screen.height,
+    availWidth: screen.availWidth, availHeight: screen.availHeight,
+    colorDepth: screen.colorDepth, pixelRatio: window.devicePixelRatio,
+    innerW: window.innerWidth, innerH: window.innerHeight,
+    orientation: screen.orientation?.type || 'unknown'
+  };
+  // 常见模拟器分辨率
+  const emuRes = [[320,480],[360,640],[384,640],[480,800],[540,960],[600,1024],[768,1024],[800,1280],[1080,1920]];
+  const isEmuRes = emuRes.some(([w,h]) => (d.width===w && d.height===h) || (d.width===h && d.height===w));
+  // DPR异常
+  if (d.pixelRatio === 1 && d.width > 400)
+    report('屏幕特征', 'warn', `DPR=1 但宽度${d.width}px (可能是模拟器)`, d);
+  else if (d.colorDepth < 24)
+    report('屏幕特征', 'warn', `色深${d.colorDepth}位 (异常)`, d);
+  else
+    report('屏幕特征', 'pass', `${d.width}x${d.height} DPR=${d.pixelRatio}`, d);
+});
+
+reg('模拟器检测', 'Performance 精度', async () => {
+  const samples = [];
+  for (let i = 0; i < 20; i++) {
+    const t1 = performance.now();
+    const t2 = performance.now();
+    if (t2 > t1) samples.push(t2 - t1);
+  }
+  const avg = samples.length ? samples.reduce((a,b) => a+b, 0) / samples.length : 0;
+  const precision = samples.length ? Math.min(...samples) : 0;
+  const d = { avgDelta: avg.toFixed(6), minDelta: precision.toFixed(6), samples: samples.length };
+  // 精度被降低到 100us 以上通常是隐私保护，5ms+ 可能是模拟器
+  if (precision >= 5)
+    report('Performance 精度', 'warn', `精度 ${precision.toFixed(3)}ms (被严格限制)`, d);
+  else
+    report('Performance 精度', 'pass', `精度 ${precision.toFixed(3)}ms`, d);
+});
+
+reg('模拟器检测', '硬件信息', async () => {
+  const d = {
+    cores: navigator.hardwareConcurrency || 'unknown',
+    memory: navigator.deviceMemory || 'unknown',
+    maxTouchPoints: navigator.maxTouchPoints,
+    platform: navigator.platform,
+    userAgent: navigator.userAgent
+  };
+  let status = 'pass', msg = `${d.cores}核`;
+  if (d.memory !== 'unknown') msg += ` ${d.memory}GB`;
+  msg += ` Touch=${d.maxTouchPoints}`;
+  // 模拟器通常 touch=0 或异常低核心
+  if (d.maxTouchPoints === 0 && /android|mobile/i.test(d.userAgent))
+    { status = 'risk'; msg += ' (声称移动端但无触摸)'; }
+  else if (d.cores <= 1)
+    { status = 'warn'; msg += ' (单核)'; }
+  report('硬件信息', status, msg, d);
+});
+
+// ---- 设备指纹 ----
+
+reg('设备指纹', 'Canvas 指纹', async () => {
+  const c = document.createElement('canvas');
+  c.width = 280; c.height = 60;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#f60'; ctx.fillRect(10, 1, 62, 20);
+  ctx.fillStyle = '#069'; ctx.font = '14px Arial';
+  ctx.fillText('AntiCheat Fingerprint! 🎮', 2, 45);
+  ctx.fillStyle = 'rgba(102,204,0,0.7)'; ctx.fillText('Canvas FP Test', 4, 17);
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(c.toDataURL()));
+  const fp = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2,'0')).join('').substring(0, 32);
+  report('Canvas 指纹', 'pass', fp, { dataUrlLength: c.toDataURL().length, hash: fp });
+});
+
+reg('设备指纹', 'AudioContext 指纹', async () => {
+  try {
+    const ac = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, 44100, 44100);
+    const osc = ac.createOscillator();
+    osc.type = 'triangle'; osc.frequency.setValueAtTime(10000, ac.currentTime);
+    const comp = ac.createDynamicsCompressor();
+    comp.threshold.setValueAtTime(-50, ac.currentTime);
+    comp.knee.setValueAtTime(40, ac.currentTime);
+    comp.ratio.setValueAtTime(12, ac.currentTime);
+    comp.attack.setValueAtTime(0, ac.currentTime);
+    comp.release.setValueAtTime(0.25, ac.currentTime);
+    osc.connect(comp); comp.connect(ac.destination);
+    osc.start(0);
+    const buf = await ac.startRendering();
+    const data = buf.getChannelData(0);
+    let sum = 0; for (let i = 4500; i < 5000; i++) sum += Math.abs(data[i]);
+    const fp = sum.toFixed(10);
+    report('AudioContext 指纹', 'pass', 'Hash: ' + fp.substring(0, 20), { fingerprint: fp });
+  } catch (e) {
+    report('AudioContext 指纹', 'warn', 'AudioContext 不可用', e.message);
+  }
+});
+
+reg('设备指纹', 'UA 与 Platform 一致性', async () => {
+  const ua = navigator.userAgent;
+  const pf = navigator.platform;
+  const d = { userAgent: ua, platform: pf, vendor: navigator.vendor, language: navigator.language };
+  let issues = [];
+  // Android UA 但 platform 不是 Linux
+  if (/android/i.test(ua) && !/linux/i.test(pf)) issues.push('UA含Android但platform非Linux');
+  // iPhone UA 但 platform 不是 iPhone
+  if (/iphone/i.test(ua) && !/iphone/i.test(pf)) issues.push('UA含iPhone但platform不匹配');
+  // 桌面 platform 但 mobile UA
+  if (/Win32|Win64|MacIntel/.test(pf) && /Mobile|Android/i.test(ua)) issues.push('桌面platform但移动UA');
+  if (issues.length) report('UA 与 Platform 一致性', 'risk', issues.join('; '), d);
+  else report('UA 与 Platform 一致性', 'pass', pf + ' | ' + (ua.length > 60 ? ua.substring(0, 60) + '...' : ua), d);
+});
+
+reg('设备指纹', '时区与语言', async () => {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const lang = navigator.language;
+  const langs = navigator.languages?.join(', ');
+  const offset = new Date().getTimezoneOffset();
+  const d = { timezone: tz, language: lang, languages: langs, offsetMin: offset };
+  report('时区与语言', 'pass', `${tz} | ${lang} | UTC${offset <= 0 ? '+' : '-'}${Math.abs(offset/60)}`, d);
+});
+
+reg('设备指纹', 'WebGL 参数指纹', async () => {
+  const c = document.createElement('canvas');
+  const gl = c.getContext('webgl');
+  if (!gl) return report('WebGL 参数指纹', 'warn', 'WebGL 不可用', null);
+  const params = {
+    maxTextureSize: gl.getParameter(gl.MAX_TEXTURE_SIZE),
+    maxViewportDims: Array.from(gl.getParameter(gl.MAX_VIEWPORT_DIMS)),
+    maxRenderbufferSize: gl.getParameter(gl.MAX_RENDERBUFFER_SIZE),
+    maxVertexAttribs: gl.getParameter(gl.MAX_VERTEX_ATTRIBS),
+    maxVaryingVectors: gl.getParameter(gl.MAX_VARYING_VECTORS),
+    maxFragUniformVectors: gl.getParameter(gl.MAX_FRAGMENT_UNIFORM_VECTORS),
+    aliasedLineWidthRange: Array.from(gl.getParameter(gl.ALIASED_LINE_WIDTH_RANGE)),
+    aliasedPointSizeRange: Array.from(gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)),
+    extensions: gl.getSupportedExtensions()?.length || 0
+  };
+  const fp = JSON.stringify(params);
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(fp));
+  const h = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2,'0')).join('').substring(0, 16);
+  report('WebGL 参数指纹', 'pass', `Hash: ${h} (${params.extensions} extensions)`, params);
+});
+
+// ---- 位置与网络 ----
+
+reg('位置与网络', 'Geolocation', async () => {
+  return new Promise(resolve => {
+    if (!navigator.geolocation) {
+      report('Geolocation', 'warn', 'Geolocation API 不可用', null);
+      resolve(); return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        const d = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy };
+        // WPK 排除 (0,0) 和 (1,1) 假坐标
+        if ((d.lat === 0 && d.lng === 0) || (d.lat === 1 && d.lng === 1))
+          report('Geolocation', 'risk', `假坐标 (${d.lat}, ${d.lng})`, d);
+        else if (d.accuracy > 5000)
+          report('Geolocation', 'warn', `精度过低: ${d.accuracy}m`, d);
+        else
+          report('Geolocation', 'pass', `(${d.lat.toFixed(4)}, ${d.lng.toFixed(4)}) ±${Math.round(d.accuracy)}m`, d);
+        resolve();
+      },
+      err => {
+        report('Geolocation', 'warn', '用户拒绝或获取失败: ' + err.message, { code: err.code });
+        resolve();
+      },
+      { timeout: 5000, enableHighAccuracy: false }
+    );
+  });
+});
+
+reg('位置与网络', 'WebRTC IP 泄露', async () => {
+  return new Promise(resolve => {
+    const ips = new Set();
+    try {
+      const pc = new RTCPeerConnection({ iceServers: [] });
+      pc.createDataChannel('');
+      pc.onicecandidate = e => {
+        if (!e.candidate) {
+          pc.close();
+          const arr = Array.from(ips);
+          if (arr.length === 0) report('WebRTC IP 泄露', 'pass', '未泄露本地 IP', { ips: arr });
+          else {
+            const hasPrivate = arr.some(ip => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip));
+            report('WebRTC IP 泄露', hasPrivate ? 'warn' : 'pass',
+              `发现 ${arr.length} 个 IP`, { ips: arr });
+          }
+          resolve();
+          return;
+        }
+        const m = /([0-9]{1,3}(\.[0-9]{1,3}){3})/.exec(e.candidate.candidate);
+        if (m) ips.add(m[1]);
+      };
+      pc.createOffer().then(o => pc.setLocalDescription(o));
+      setTimeout(() => { pc.close(); resolve(); }, 3000);
+    } catch (e) {
+      report('WebRTC IP 泄露', 'pass', 'WebRTC 不可用或被阻止', e.message);
+      resolve();
+    }
+  });
+});
+
+reg('位置与网络', '网络连接信息', async () => {
+  const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  if (!conn) return report('网络连接信息', 'warn', 'Network Information API 不可用', null);
+  const d = {
+    effectiveType: conn.effectiveType, downlink: conn.downlink,
+    rtt: conn.rtt, saveData: conn.saveData, type: conn.type
+  };
+  report('网络连接信息', 'pass', `${d.effectiveType} | RTT=${d.rtt}ms | ${d.downlink}Mbps`, d);
+});
+
+// ---- 工具检测 ----
+
+reg('工具检测', '本地端口扫描 (7125/7126)', async () => {
+  const scanPort = (port) => new Promise(resolve => {
+    try {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+      const timer = setTimeout(() => { ws.close(); resolve(false); }, 1500);
+      ws.onopen = () => { clearTimeout(timer); ws.close(); resolve(true); };
+      ws.onerror = () => { clearTimeout(timer); resolve(false); };
+    } catch (e) { resolve(false); }
+  });
+  const r7125 = await scanPort(7125);
+  const r7126 = await scanPort(7126);
+  const d = { port_7125: r7125, port_7126: r7126 };
+  if (r7125 || r7126)
+    report('本地端口扫描 (7125/7126)', 'risk', `端口开放: ${r7125 ? '7125 ' : ''}${r7126 ? '7126' : ''}`, d);
+  else
+    report('本地端口扫描 (7125/7126)', 'pass', '未检测到可疑端口', d);
+});
+
+reg('工具检测', '额外端口扫描', async () => {
+  const ports = [8080, 8888, 27042, 27043, 5555, 9222];
+  // 27042/27043=Frida, 5555=ADB, 9222=Chrome DevTools
+  const scanPort = (port) => new Promise(resolve => {
+    try {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+      const timer = setTimeout(() => { ws.close(); resolve(false); }, 1000);
+      ws.onopen = () => { clearTimeout(timer); ws.close(); resolve(true); };
+      ws.onerror = () => { clearTimeout(timer); resolve(false); };
+    } catch (e) { resolve(false); }
+  });
+  const open = [];
+  for (const p of ports) { if (await scanPort(p)) open.push(p); }
+  const d = { scanned: ports, open };
+  if (open.some(p => [27042, 27043].includes(p)))
+    report('额外端口扫描', 'risk', `Frida 端口开放: ${open.join(', ')}`, d);
+  else if (open.length)
+    report('额外端口扫描', 'warn', `开放端口: ${open.join(', ')}`, d);
+  else
+    report('额外端口扫描', 'pass', `扫描 ${ports.length} 个端口，均未开放`, d);
+});
+
+reg('工具检测', '自动化框架检测', async () => {
+  const signs = {
+    webdriver: navigator.webdriver,
+    __selenium_unwrapped: !!window.__selenium_unwrapped,
+    __webdriver_evaluate: !!window.__webdriver_evaluate,
+    __driver_evaluate: !!window.__driver_evaluate,
+    __webdriver_script_function: !!window.__webdriver_script_function,
+    domAutomation: !!window.domAutomation || !!window.domAutomationController,
+    _phantom: !!window._phantom || !!window.callPhantom,
+    __nightmare: !!window.__nightmare,
+    _selenium: !!document.__selenium_unwrapped,
+    callPhantom: !!window.callPhantom,
+    awesomium: !!window.awesomium,
+    cdc_adoQpoasnfa76pfcZLmcfl: !!window.cdc_adoQpoasnfa76pfcZLmcfl, // ChromeDriver
+    $chrome_asyncScriptInfo: !!window.$chrome_asyncScriptInfo,
+  };
+  const found = Object.entries(signs).filter(([k,v]) => v).map(([k]) => k);
+  if (found.length)
+    report('自动化框架检测', 'risk', `检测到: ${found.join(', ')}`, signs);
+  else
+    report('自动化框架检测', 'pass', '未检测到自动化框架', signs);
+});
+
+reg('工具检测', 'DevTools 检测', async () => {
+  return new Promise(resolve => {
+    const threshold = 160;
+    const widthDiff = window.outerWidth - window.innerWidth;
+    const heightDiff = window.outerHeight - window.innerHeight;
+    // Firebug
+    const firebug = window.console?.firebug || (window.console?.exception && window.console?.table);
+    const d = { widthDiff, heightDiff, firebug: !!firebug };
+
+    // 利用 devtools 打开时 console.log 对象会被 toString 的特性
+    let devtoolsOpen = false;
+    const el = new Image();
+    Object.defineProperty(el, 'id', { get: function() { devtoolsOpen = true; } });
+    console.log('%c', el);
+    console.clear();
+
+    d.devtoolsOpen = devtoolsOpen;
+    d.sizeHeuristic = widthDiff > threshold || heightDiff > threshold;
+
+    if (devtoolsOpen || d.sizeHeuristic)
+      report('DevTools 检测', 'warn', 'DevTools 可能已打开', d);
+    else if (firebug)
+      report('DevTools 检测', 'warn', '检测到 Firebug', d);
+    else
+      report('DevTools 检测', 'pass', '未检测到 DevTools', d);
+    resolve();
+  });
+});
+
+reg('工具检测', 'Proxy/VPN 特征', async () => {
+  const d = {};
+  // 检查是否有 proxy 相关 header (通过 timing 侧信道)
+  // 最可靠的方式是检查 WebRTC 泄露的 IP 与公网 IP 不一致
+  // 这里用 timezone vs language 不一致来推断
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const lang = navigator.language;
+  d.timezone = tz;
+  d.language = lang;
+  // 简单推断: 中文语言但非亚洲时区
+  const asianTz = /asia|pacific|australia|china|tokyo|seoul|singapore|hong_kong|taipei/i.test(tz);
+  const cnLang = /^zh/i.test(lang);
+  if (cnLang && !asianTz)
+    report('Proxy/VPN 特征', 'warn', `语言${lang}但时区${tz} (可能使用VPN)`, d);
+  else
+    report('Proxy/VPN 特征', 'pass', `时区与语言一致`, d);
+});
+
+// ---- 注入检测 ----
+
+reg('注入检测', '触摸事件来源分析', async () => {
+  return new Promise(resolve => {
+    const info = { received: false, isTrusted: null, sourceType: null };
+    const tip = document.createElement('div');
+    tip.style.cssText = 'text-align:center;padding:20px;margin:8px 0;background:var(--card);border:1px dashed var(--blue);border-radius:10px;font-size:13px;color:var(--blue);cursor:pointer;';
+    tip.textContent = '👆 请点击此处进行触摸检测（3秒超时）';
+    const card = document.getElementById('card-' + hashName('触摸事件来源分析'));
+    if (card) card.after(tip);
+
+    const handler = (e) => {
+      info.received = true;
+      info.isTrusted = e.isTrusted;
+      info.type = e.type;
+      info.sourceType = e.sourceCapabilities?.firesTouchEvents ? 'touch' : 'mouse/injected';
+      tip.remove();
+      document.removeEventListener('pointerdown', handler);
+      if (!e.isTrusted)
+        report('触摸事件来源分析', 'risk', '检测到非信任事件 (isTrusted=false)', info);
+      else
+        report('触摸事件来源分析', 'pass', `${info.type} isTrusted=${info.isTrusted}`, info);
+      resolve();
+    };
+    document.addEventListener('pointerdown', handler);
+    setTimeout(() => {
+      if (!info.received) {
+        tip.remove();
+        document.removeEventListener('pointerdown', handler);
+        report('触摸事件来源分析', 'warn', '3秒内无触摸/点击事件', info);
+        resolve();
+      }
+    }, 3000);
+  });
+});
+
+reg('注入检测', '按键事件注入检测', async () => {
+  return new Promise(resolve => {
+    const info = { events: [] };
+    const handler = (e) => {
+      info.events.push({ type: e.type, key: e.key, isTrusted: e.isTrusted, timeStamp: e.timeStamp });
+      if (info.events.length >= 3) finish();
+    };
+    const finish = () => {
+      document.removeEventListener('keydown', handler);
+      const untrusted = info.events.filter(e => !e.isTrusted);
+      if (untrusted.length)
+        report('按键事件注入检测', 'risk', `${untrusted.length}/${info.events.length} 个非信任按键事件`, info);
+      else if (info.events.length)
+        report('按键事件注入检测', 'pass', `${info.events.length} 个按键均为信任事件`, info);
+      else
+        report('按键事件注入检测', 'warn', '2秒内无按键事件（可跳过）', info);
+      resolve();
+    };
+    document.addEventListener('keydown', handler);
+    setTimeout(() => { if (!info.events.length) finish(); }, 2000);
+  });
+});
+
+// ---- 完整性检测 ----
+
+reg('完整性检测', '原生函数完整性', async () => {
+  const fns = {
+    'fetch': window.fetch,
+    'XMLHttpRequest.open': XMLHttpRequest.prototype.open,
+    'console.log': console.log,
+    'addEventListener': EventTarget.prototype.addEventListener,
+    'createElement': document.createElement,
+    'querySelector': document.querySelector,
+    'setTimeout': window.setTimeout,
+    'JSON.stringify': JSON.stringify,
+    'JSON.parse': JSON.parse,
+    'WebSocket': window.WebSocket,
+  };
+  const tampered = [];
+  for (const [name, fn] of Object.entries(fns)) {
+    if (!fn) continue;
+    const str = Function.prototype.toString.call(fn);
+    if (!/\[native code\]/.test(str)) tampered.push(name);
+  }
+  if (tampered.length)
+    report('原生函数完整性', 'risk', `${tampered.length} 个函数被篡改: ${tampered.join(', ')}`, { tampered });
+  else
+    report('原生函数完整性', 'pass', `${Object.keys(fns).length} 个原生函数完整`, { checked: Object.keys(fns) });
+});
+
+reg('完整性检测', 'toString 防护检测', async () => {
+  // 检测 Function.prototype.toString 自身是否被篡改
+  const d = {};
+  try {
+    const toStr = Function.prototype.toString;
+    d.toStringNative = /\[native code\]/.test(toStr.call(toStr));
+    d.bindNative = /\[native code\]/.test(toStr.call(Function.prototype.bind));
+    d.callNative = /\[native code\]/.test(toStr.call(Function.prototype.call));
+    if (!d.toStringNative)
+      report('toString 防护检测', 'risk', 'Function.prototype.toString 被篡改', d);
+    else if (!d.bindNative || !d.callNative)
+      report('toString 防护检测', 'warn', 'bind/call 可能被篡改', d);
+    else
+      report('toString 防护检测', 'pass', '核心函数原型完整', d);
+  } catch (e) {
+    report('toString 防护检测', 'warn', '检测异常: ' + e.message, d);
+  }
+});
+
+reg('完整性检测', 'iframe 沙盒检测', async () => {
+  const d = {};
+  try {
+    d.isInIframe = window !== window.top;
+    d.frameCount = window.frames.length;
+    d.parentOrigin = d.isInIframe ? '(无法跨域获取)' : 'N/A';
+    if (d.isInIframe)
+      report('iframe 沙盒检测', 'warn', '当前页面运行在 iframe 中', d);
+    else
+      report('iframe 沙盒检测', 'pass', '非 iframe 环境', d);
+  } catch (e) {
+    report('iframe 沙盒检测', 'warn', '跨域 iframe 检测受限', d);
+  }
+});
+
+// ---- 行为分析 ----
+
+reg('行为分析', '浏览器插件数量', async () => {
+  const n = navigator.plugins?.length || 0;
+  const list = [];
+  for (let i = 0; i < Math.min(n, 20); i++) list.push(navigator.plugins[i]?.name);
+  const d = { count: n, plugins: list };
+  // 无头浏览器通常 0 个插件
+  if (n === 0 && !/mobile|android|iphone/i.test(navigator.userAgent))
+    report('浏览器插件数量', 'warn', '0 个插件 (可能是无头浏览器)', d);
+  else
+    report('浏览器插件数量', 'pass', `${n} 个插件`, d);
+});
+
+reg('行为分析', 'navigator 属性异常', async () => {
+  const d = {};
+  const issues = [];
+  // 检测 headless 特征
+  if (navigator.webdriver === true) issues.push('navigator.webdriver=true');
+  if (!navigator.languages || navigator.languages.length === 0) issues.push('languages 为空');
+  if (navigator.plugins && navigator.plugins.length === 0 && !/mobile/i.test(navigator.userAgent))
+    issues.push('桌面端 plugins=0');
+
+  // 检测 permissions API 异常
+  try {
+    const perm = await navigator.permissions.query({ name: 'notifications' });
+    d.notificationPerm = perm.state;
+    if (perm.state === 'denied' && navigator.webdriver) issues.push('通知被拒绝+webdriver');
+  } catch (e) { d.permError = e.message; }
+
+  d.issues = issues;
+  if (issues.length >= 2)
+    report('navigator 属性异常', 'risk', issues.join('; '), d);
+  else if (issues.length === 1)
+    report('navigator 属性异常', 'warn', issues[0], d);
+  else
+    report('navigator 属性异常', 'pass', '未发现异常属性', d);
+});
+
+reg('行为分析', 'Storage 可用性', async () => {
+  const d = {};
+  try { localStorage.setItem('_ac_test', '1'); localStorage.removeItem('_ac_test'); d.localStorage = true; } catch { d.localStorage = false; }
+  try { sessionStorage.setItem('_ac_test', '1'); sessionStorage.removeItem('_ac_test'); d.sessionStorage = true; } catch { d.sessionStorage = false; }
+  try { d.indexedDB = !!window.indexedDB; } catch { d.indexedDB = false; }
+  try { d.cookiesEnabled = navigator.cookieEnabled; } catch { d.cookiesEnabled = false; }
+
+  const disabled = Object.entries(d).filter(([k,v]) => !v).map(([k]) => k);
+  if (disabled.length >= 2)
+    report('Storage 可用性', 'warn', `${disabled.join(', ')} 不可用 (隐私模式?)`, d);
+  else
+    report('Storage 可用性', 'pass', '所有存储 API 可用', d);
+});
+
+// ========== 启动 ==========
+runAll();
+</script>
+</body>
+</html>
