@@ -2227,6 +2227,126 @@ reg('深度指纹','时间源精度',async()=>{
   }
 });
 
+// ---- 动态监测 ----
+
+reg('动态监测','陀螺仪持续监测',async()=>{
+  if(isPC()) return report('陀螺仪持续监测','info','桌面端 (跳过)',{skip:true});
+  if(isIOS()&&typeof window.DeviceMotionEvent!=='undefined'&&typeof window.DeviceMotionEvent.requestPermission==='function')
+    return report('陀螺仪持续监测','info','iOS 需用户手势授权 (跳过)',{ios:true});
+  const DUR=30000,INT=100;
+  return new Promise(rv=>{
+    const samples=[];let tid;
+    const h=e=>{
+      const a=e.accelerationIncludingGravity||{};
+      samples.push({x:a.x,y:a.y,z:a.z,t:Date.now()});
+    };
+    window.addEventListener('devicemotion',h);
+    tid=setTimeout(()=>{
+      window.removeEventListener('devicemotion',h);
+      if(samples.length<3){
+        report('陀螺仪持续监测',isMobile()?'risk':'info',
+          isMobile()?'30秒无运动数据 (模拟器)':'无运动数据',{count:samples.length});
+        return rv();
+      }
+      const allNull=samples.every(s=>s.x===null&&s.y===null&&s.z===null);
+      if(allNull){
+        report('陀螺仪持续监测','risk','加速度全null×30秒 (模拟器)',{count:samples.length,allNull:true});
+        return rv();
+      }
+      const valid=samples.filter(s=>s.x!==null);
+      if(valid.length<3){
+        report('陀螺仪持续监测','risk','有效样本不足 (异常)',{count:samples.length,valid:valid.length});
+        return rv();
+      }
+      const mx=valid.reduce((s,v)=>s+v.x,0)/valid.length;
+      const my=valid.reduce((s,v)=>s+v.y,0)/valid.length;
+      const mz=valid.reduce((s,v)=>s+v.z,0)/valid.length;
+      const stdX=Math.sqrt(valid.reduce((s,v)=>s+(v.x-mx)**2,0)/valid.length);
+      const stdY=Math.sqrt(valid.reduce((s,v)=>s+(v.y-my)**2,0)/valid.length);
+      const stdZ=Math.sqrt(valid.reduce((s,v)=>s+(v.z-mz)**2,0)/valid.length);
+      const stdTotal=Math.sqrt(stdX**2+stdY**2+stdZ**2);
+      const allZero=valid.every(s=>s.x===0&&s.y===0&&s.z===0);
+      const d={count:samples.length,valid:valid.length,
+        mean:{x:+mx.toFixed(4),y:+my.toFixed(4),z:+mz.toFixed(4)},
+        std:{x:+stdX.toFixed(6),y:+stdY.toFixed(6),z:+stdZ.toFixed(6),total:+stdTotal.toFixed(6)},
+        allZero,first3:valid.slice(0,3).map(s=>({x:+s.x.toFixed(3),y:+s.y.toFixed(3),z:+s.z.toFixed(3)})),
+        last3:valid.slice(-3).map(s=>({x:+s.x.toFixed(3),y:+s.y.toFixed(3),z:+s.z.toFixed(3)}))};
+      if(allZero){
+        report('陀螺仪持续监测','risk',`恒定(0,0,0)×${valid.length}帧 (模拟器)`,d);
+      }else if(stdTotal<0.001){
+        report('陀螺仪持续监测','risk',`方差≈0 (${stdTotal.toFixed(6)}) 完美静止 (模拟器)`,d);
+      }else if(stdTotal<0.05){
+        report('陀螺仪持续监测','pass',`静止+微抖动 std=${stdTotal.toFixed(4)} (真实设备静放)`,d);
+      }else{
+        report('陀螺仪持续监测','pass',`有运动 std=${stdTotal.toFixed(3)} (真实设备)`,d);
+      }
+      rv();
+    },DUR);
+  });
+});
+
+reg('动态监测','触摸点击采集',async()=>{
+  if(isPC()) return report('触摸点击采集','info','桌面端 (跳过)',{skip:true});
+  const DUR=30000;
+  return new Promise(rv=>{
+    const events=[];let reported=false;
+    const onTouch=e=>{
+      for(let i=0;i<e.touches.length;i++){
+        const t=e.touches[i];
+        events.push({type:'touch',x:Math.round(t.clientX),y:Math.round(t.clientY),
+          force:t.force,rx:t.radiusX,ry:t.radiusY,t:Date.now()});
+      }
+    };
+    const onClick=e=>{
+      events.push({type:'click',x:Math.round(e.clientX),y:Math.round(e.clientY),
+        isTrusted:e.isTrusted,t:Date.now()});
+    };
+    document.addEventListener('touchstart',onTouch,{passive:true});
+    document.addEventListener('click',onClick,{passive:true});
+    setTimeout(()=>{
+      if(reported) return;
+      reported=true;
+      document.removeEventListener('touchstart',onTouch);
+      document.removeEventListener('click',onClick);
+      if(events.length===0){
+        report('触摸点击采集','info','30秒内无交互事件',{count:0});
+        return rv();
+      }
+      const intervals=[];
+      for(let i=1;i<events.length;i++) intervals.push(events[i].t-events[i-1].t);
+      const coords=events.map(e=>e.x+','+e.y);
+      const uniqueCoords=new Set(coords).size;
+      const allSamePos=uniqueCoords===1&&events.length>3;
+      let perfectInterval=false;
+      if(intervals.length>=3){
+        const avgInt=intervals.reduce((a,b)=>a+b,0)/intervals.length;
+        const stdInt=Math.sqrt(intervals.reduce((s,v)=>s+(v-avgInt)**2,0)/intervals.length);
+        const cv=avgInt>0?stdInt/avgInt:0;
+        perfectInterval=cv<0.05&&avgInt<2000;
+      }
+      const untrusted=events.filter(e=>e.isTrusted===false);
+      const touches=events.filter(e=>e.type==='touch');
+      const allZeroForce=touches.length>0&&touches.every(e=>e.force===0);
+      const allSameRadius=touches.length>1&&touches.every(e=>e.rx===touches[0].rx&&e.ry===touches[0].ry);
+      const d={count:events.length,uniqueCoords,allSamePos,perfectInterval,
+        untrusted:untrusted.length,allZeroForce,allSameRadius,
+        samples:events.slice(0,10),intervals:intervals.slice(0,10)};
+      if(untrusted.length>0){
+        report('触摸点击采集','risk',`${untrusted.length}个非信任事件 (脚本注入)`,d);
+      }else if(allSamePos&&perfectInterval){
+        report('触摸点击采集','risk',`${events.length}次点击 坐标固定+等间隔 (自动脚本)`,d);
+      }else if(allSamePos){
+        report('触摸点击采集','risk',`${events.length}次点击 全部同一坐标 (可疑)`,d);
+      }else if(perfectInterval){
+        report('触摸点击采集','info',`${events.length}次交互 间隔过于规律 (可疑)`,d);
+      }else{
+        report('触摸点击采集','pass',`${events.length}次交互 ${uniqueCoords}个不同位置 (正常)`,d);
+      }
+      rv();
+    },DUR);
+  });
+});
+
 // ---- 综合判定 ----
 
 reg('综合判定','设备类型概率',async()=>{
@@ -2290,7 +2410,14 @@ async function run(){
 
   // 阶段2: 针对性检测
   buildUI();
-  for(const c of checks){try{await c.fn()}catch(e){report(c.name,'info','异常: '+e.message,e.stack)}}
+  const dynamicChecks=checks.filter(c=>c.cat==='动态监测');
+  const otherChecks=checks.filter(c=>c.cat!=='动态监测');
+  // 动态监测项在后台并行启动
+  const dynamicP=Promise.all(dynamicChecks.map(c=>c.fn().catch(e=>report(c.name,'info','异常: '+e.message,e.stack))));
+  // 其他检测顺序执行
+  for(const c of otherChecks){try{await c.fn()}catch(e){report(c.name,'info','异常: '+e.message,e.stack)}}
+  // 等动态监测完成
+  await dynamicP;
 }
 run();
 </script>
